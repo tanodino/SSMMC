@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=pretrain_ours
-#SBATCH --output=pretrain_ours_%j.out
-#SBATCH --error=pretrain_ours_%j.err
+#SBATCH --job-name=fixmatch_mm
+#SBATCH --output=fixmatch_mm_%j.out
+#SBATCH --error=fixmatch_mm_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
@@ -17,14 +17,15 @@ module load pytorch-gpu/py3/2.3.0
 
 export PYTHONUSERBASE=$WORK/.local
 
-cd $WORK/SSL_ViT/SSL_colearning_S1S2
+cd $WORK/SSMMC/SSMMC
 
-#../ML-METER_DATA/ SAR MS 9
-#$1: directory of the data
-#$2: First Data Modality
-#$3: Second Data Modality
-#$4: number of patches
-#$5: max number of epochs
+# $1 - Dataset
+# $2 - First Modality
+# $3 - Second Modality
+# $4 - per-class labels
+# $5 - Fusion Model (SF / FC)
 
-#srun python baselines.py $1 $2 $3 $4 $5 $6
-srun python pretrain_MM_smallV4.py $1 $2 $3 $4 $5
+for i in $(seq 0 4)
+do
+    srun python fixmatch_baselines_main.py $1 $2 $3 $4 $i $5
+done
