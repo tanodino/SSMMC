@@ -59,7 +59,7 @@ if __name__ == "__main__":
 
     dir_name = dataset_path+"/FIXMATCH_%s"%sf_or_fc
     os.makedirs(dir_name, exist_ok=True)
-    output_file = dir_name+"%s_%s.pth"%(perc, run_id)
+    output_file = dir_name+"/%s_%s.pth"%(perc, run_id)
 
     #batch_size = pretraining_batch_size
     print("batch_size %d"%batch_size)

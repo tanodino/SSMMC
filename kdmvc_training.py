@@ -160,7 +160,7 @@ if __name__ == "__main__":
 
     dir_name = dataset_path + "/KDMvC"
     os.makedirs(dir_name, exist_ok=True)
-    output_file = dir_name+"%s_%s.pth"%(perc, run_id)
+    output_file = dir_name+"/%s_%s.pth"%(perc, run_id)
 
     print("batch_size %d" % batch_size)
 

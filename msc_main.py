@@ -66,9 +66,7 @@ if __name__ == "__main__":
 
     dir_name = dataset_path + "/MSC"
     os.makedirs(dir_name, exist_ok=True)
-    output_file = dir_name+"%s_%s.pth"%(perc, run_id)
-
-    checkpoint_path = "%s/checkpoint_latest.pth"%dir_name
+    output_file = dir_name+"/%s_%s.pth"%(perc, run_id)
 
     #batch_size = pretraining_batch_size
     print("batch_size %d"%batch_size)
