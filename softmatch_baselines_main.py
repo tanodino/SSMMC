@@ -125,7 +125,7 @@ if __name__ == "__main__":
         print("NO METHOD DEFINED")
         exit(0)
     
-    #model.compile()
+    model.compile()
     loss_fn = nn.CrossEntropyLoss() #MSCLoss(config)
     loss_fn_none = nn.CrossEntropyLoss(reduction="none")
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)

@@ -130,7 +130,7 @@ if __name__ == "__main__":
     )
 
     model = MSCModel(config).to(device)
-    #model.compile()
+    model.compile()
     loss_fn = MSCLoss(config)
     loss_ce = nn.CrossEntropyLoss() #MSCLoss(config)
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)

@@ -123,7 +123,7 @@ if __name__ == "__main__":
         print("NO METHOD DEFINED")
         exit(0)
     
-    #model.compile()
+    model.compile()
     loss_fn = nn.CrossEntropyLoss() #MSCLoss(config)
     loss_fn_none = nn.CrossEntropyLoss(reduction="none")
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
@@ -158,6 +158,7 @@ if __name__ == "__main__":
             with autocast():
                 pred_lab = model(f_batch, s_batch)
                 sup_loss = loss_fn(pred_lab, y_batch)
+
                 if use_ssl:
                     f_weak, s_weak = weak_augment_pair(f_batch_unl, s_batch_unl)
                     f_strong, s_strong = strong_augment_pair(f_batch_unl, s_batch_unl)

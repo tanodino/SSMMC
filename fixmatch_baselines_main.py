@@ -128,7 +128,7 @@ if __name__ == "__main__":
         print("NO METHOD DEFINED")
         exit(0)
     
-    #model.compile()
+    model.compile()
     loss_fn = nn.CrossEntropyLoss() #MSCLoss(config)
     loss_fn_none = nn.CrossEntropyLoss(reduction="none")
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
@@ -159,27 +159,25 @@ if __name__ == "__main__":
             f_batch_unl = f_batch_unl.to(device, non_blocking=True)
             s_batch_unl = s_batch_unl.to(device, non_blocking=True)
             with autocast():
-
-                f_weak, s_weak = weak_augment_pair(f_batch_unl, s_batch_unl)
-                f_strong, s_strong = strong_augment_pair(f_batch_unl, s_batch_unl)
-
-                with torch.no_grad():
-                    pred_weak = model(f_weak, s_weak)
-                    probs_weak = F.softmax(pred_weak, dim=-1)
-                    max_probs, pseudo_labels = probs_weak.max(dim=-1)
-
-                # FixMatch: fixed threshold, hard 0/1 mask (Sohn et al., 2020, Eq. 6)
-                # -- replaces SoftMatch's EMA-tracked continuous sample_weights.
-                mask = (max_probs >= FIXMATCH_THRESHOLD).float()
-
-                pred_strong = model(f_strong, s_strong)
-                unsup_loss_per_sample = loss_fn_none(pred_strong, pseudo_labels)
-                unsup_loss = (unsup_loss_per_sample * mask).mean()
-
                 pred_lab = model(f_batch, s_batch)
                 sup_loss = loss_fn(pred_lab, y_batch)
-
+                
                 if use_ssl:
+                    f_weak, s_weak = weak_augment_pair(f_batch_unl, s_batch_unl)
+                    f_strong, s_strong = strong_augment_pair(f_batch_unl, s_batch_unl)
+
+                    with torch.no_grad():
+                        pred_weak = model(f_weak, s_weak)
+                        probs_weak = F.softmax(pred_weak, dim=-1)
+                        max_probs, pseudo_labels = probs_weak.max(dim=-1)
+
+                    # FixMatch: fixed threshold, hard 0/1 mask (Sohn et al., 2020, Eq. 6)
+                    # -- replaces SoftMatch's EMA-tracked continuous sample_weights.
+                    mask = (max_probs >= FIXMATCH_THRESHOLD).float()
+
+                    pred_strong = model(f_strong, s_strong)
+                    unsup_loss_per_sample = loss_fn_none(pred_strong, pseudo_labels)
+                    unsup_loss = (unsup_loss_per_sample * mask).mean()                   
                     loss = sup_loss + lambda_u * unsup_loss
                 else:
                     loss = sup_loss
