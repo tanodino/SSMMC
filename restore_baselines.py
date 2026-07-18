@@ -63,7 +63,7 @@ if __name__ == "__main__":
         num_classes=n_classes, hidden_dim=256, dropout=0.1
     )
 
-    dir_name = os.path.join(dataset_path, sf_or_fc)
+    #dir_name = os.path.join(dataset_path, sf_or_fc)
 
     f1_scores = []
     for run_id in run_ids:
