@@ -152,6 +152,8 @@ if __name__ == "__main__":
         n_batches = 0
         mask_rate_sum = 0.0        # <-- new
         mask_batches = 0           # <-- new
+        majority_frac_sum = 0.0
+        majority_frac_batches = 0
         for (f_batch, s_batch, y_batch), (f_batch_unl, s_batch_unl) in zip(
             itertools.cycle(dataloader_lab_train), dataloader_unl_train):           
 
@@ -230,6 +232,7 @@ if __name__ == "__main__":
         total_loss = total_loss.item()  
         if epoch % 5 == 0:
             avg_mask_rate = mask_rate_sum / max(mask_batches, 1)
+            avg_majority_frac = majority_frac_sum / max(majority_frac_batches, 1)   # <-- new
             print(f"epoch {epoch} "
                 f"total={np.mean(total_loss / max(n_batches, 1)):.4f} "
                 f"elapsed_time={elapsed_time:.2f} "

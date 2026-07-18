@@ -125,7 +125,7 @@ if __name__ == "__main__":
         print("NO METHOD DEFINED")
         exit(0)
         
-    model.compile()
+    #model.compile()
     loss_fn_none = nn.CrossEntropyLoss(reduction="none")
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
     scaler = GradScaler()
@@ -140,11 +140,20 @@ if __name__ == "__main__":
     step = 0
     ema_weights = None
     for epoch in range(EPOCHS):
-        #for f_batch, s_batch, y_batch in dataloader_lab_train:
         start_time = time.time()
-        total_loss = torch.zeros((), device=device) 
-        use_ssl = epoch > WARM_UP_EPOCH_SSL
+        total_loss = torch.zeros((), device=device)
         n_batches = 0
+        use_ssl = epoch > WARM_UP_EPOCH_SSL
+        mask_rate_sum = 0.0
+        mask_batches = 0
+        majority_frac_sum = 0.0
+        majority_frac_batches = 0
+
+        tau_t_sum = 0.0            # <-- new
+        p_t_max_sum = 0.0          # <-- new
+        p_t_min_sum = 0.0          # <-- new
+        state_batches = 0          # <-- new
+
         for (f_batch, s_batch, y_batch), (f_batch_unl, s_batch_unl) in zip(
             itertools.cycle(dataloader_lab_train), dataloader_unl_train):           
 
@@ -179,6 +188,22 @@ if __name__ == "__main__":
 
                     freematch.update(probs_weak)                              # needs full [B, C] distribution
                     sample_mask = freematch.mask(max_probs, pseudo_labels)     # hard 0/1 mask, shape [B]
+
+                    mask_rate_sum += sample_mask.float().mean().item()
+                    mask_batches += 1
+
+                    if sample_mask.sum() > 0:
+                        accepted_labels = pseudo_labels[sample_mask.bool()]
+                        majority_frac = (accepted_labels.bincount(minlength=n_classes).max() / accepted_labels.numel()).item()
+                        majority_frac_sum += majority_frac
+                        majority_frac_batches += 1
+
+                    # NEW: track the raw internal state directly
+                    tau_t_sum += freematch.tau_t.item()
+                    p_t_max_sum += freematch.p_t.max().item()
+                    p_t_min_sum += freematch.p_t.min().item()
+                    state_batches += 1
+
 
                     pred_strong = model(f_strong, s_strong)
                     if sf_or_fc == "SF":
@@ -219,13 +244,23 @@ if __name__ == "__main__":
             predictions, test_labels = evaluation(model, dataloader_test, device)
 
         f1_val = f1_score(test_labels, predictions, average="weighted")
-        total_loss = total_loss.item()  
+        total_loss = total_loss.item()
         if epoch % 5 == 0:
+            avg_mask_rate = mask_rate_sum / max(mask_batches, 1)
+            avg_majority_frac = majority_frac_sum / max(majority_frac_batches, 1)
+            avg_tau_t = tau_t_sum / max(state_batches, 1)              # <-- new
+            avg_p_t_max = p_t_max_sum / max(state_batches, 1)          # <-- new
+            avg_p_t_min = p_t_min_sum / max(state_batches, 1)          # <-- new
             print(f"epoch {epoch} "
                 f"total={np.mean(total_loss / max(n_batches, 1)):.4f} "
                 f"elapsed_time={elapsed_time:.2f} "
-                f"F1-score={(f1_val * 100):.2f}")
+                f"F1-score={(f1_val * 100):.2f} "
+                f"mask_rate={avg_mask_rate:.3f} "
+                f"majority_frac={avg_majority_frac:.3f} "
+                f"tau_t={avg_tau_t:.3f} "
+                f"p_t_max={avg_p_t_max:.3f} "
+                f"p_t_min={avg_p_t_min:.3f}")
             sys.stdout.flush()
-    
+
     model.load_state_dict(ema_weights)
     torch.save(model.state_dict(), output_file)
