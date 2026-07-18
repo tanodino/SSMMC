@@ -42,6 +42,7 @@ if __name__ == "__main__":
     second_prefix = sys.argv[3]
     perc = sys.argv[4]
     run_id = sys.argv[5]
+    print(sys.argv)
     
     first_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, first_prefix) )
     second_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, second_prefix) )

@@ -134,6 +134,7 @@ if __name__ == "__main__":
     second_prefix = sys.argv[3]
     perc = sys.argv[4]
     run_id = sys.argv[5]
+    print(sys.argv)
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
@@ -358,7 +359,7 @@ if __name__ == "__main__":
 
             f1_val = f1_score(test_labels, predictions, average="weighted")
             total_loss = total_loss.item()  
-            
+
             print(f"epoch {epoch} | phase2={'on' if use_ssl else 'off (warmup)'} "
                 f"total={np.mean(total_loss / max(n_batches, 1)):.4f} "
                 f"elapsed_time={elapsed_time:.2f} "
