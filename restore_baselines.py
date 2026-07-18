@@ -64,7 +64,7 @@ if __name__ == "__main__":
     )
 
     #dir_name = os.path.join(dataset_path, sf_or_fc)
-
+    dir_name = dataset_path
     f1_scores = []
     for run_id in run_ids:
         ckpt_path = os.path.join(dir_name+"/"+method, "%s_%s.pth" % (perc, run_id))
