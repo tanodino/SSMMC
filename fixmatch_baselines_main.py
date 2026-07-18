@@ -190,6 +190,12 @@ if __name__ == "__main__":
                     mask_rate_sum += mask.mean().item()   # <-- new
                     mask_batches += 1                     # <-- new
 
+                    if mask.sum() > 0:
+                        accepted_labels = pseudo_labels[mask.bool()]
+                        majority_frac = (accepted_labels.bincount(minlength=n_classes).max() / accepted_labels.numel()).item()
+                        majority_frac_sum += majority_frac
+                        majority_frac_batches += 1
+
                     pred_strong = model(f_strong, s_strong)
                     if sf_or_fc == "SF":
                         log_probs_strong = torch.log(pred_strong.clamp(min=1e-8))
@@ -228,7 +234,8 @@ if __name__ == "__main__":
                 f"total={np.mean(total_loss / max(n_batches, 1)):.4f} "
                 f"elapsed_time={elapsed_time:.2f} "
                 f"F1-score={(f1_val * 100):.2f} "
-                f"mask_rate={avg_mask_rate:.3f}")
+                f"mask_rate={avg_mask_rate:.3f} "
+                f"majority_frac={avg_majority_frac:.3f}")   # <-- new
             sys.stdout.flush()
     
     model.load_state_dict(ema_weights)
