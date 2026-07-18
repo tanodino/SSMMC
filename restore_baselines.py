@@ -15,11 +15,12 @@ torch.backends.cudnn.allow_tf32 = True
 if __name__ == "__main__":
     batch_size = 16
     dataset_path = sys.argv[1]
-    first_prefix = sys.argv[2]
-    second_prefix = sys.argv[3]
-    perc = sys.argv[4]
-    sf_or_fc = sys.argv[5]              # SF = score fusion / FC = feature concat
-    n_splits = int(sys.argv[6]) if len(sys.argv) > 6 else 5
+    method = sys.argv[2]
+    first_prefix = sys.argv[3]
+    second_prefix = sys.argv[4]
+    perc = sys.argv[5]
+    sf_or_fc = sys.argv[6]              # SF = score fusion / FC = feature concat
+    n_splits = int(sys.argv[7]) if len(sys.argv) > 6 else 5
     run_ids = range(n_splits)           # ASSUMPTION: run_id in training was "0","1","2","3","4"
                                          # -> adjust `run_ids` below if your run_ids are named differently
 
@@ -67,7 +68,7 @@ if __name__ == "__main__":
 
     f1_scores = []
     for run_id in run_ids:
-        ckpt_path = os.path.join(dir_name, "%s_%s.pth" % (perc, run_id))
+        ckpt_path = os.path.join(dir_name+"/"+method, "%s_%s.pth" % (perc, run_id))
 
         if not os.path.exists(ckpt_path):
             print("WARNING: checkpoint not found, skipping: %s" % ckpt_path)
