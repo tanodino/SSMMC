@@ -143,7 +143,7 @@ if __name__ == "__main__":
         start_time = time.time()
         total_loss = torch.zeros((), device=device) 
         n_batches = 0
-        use_ssl = epoch > WARM_UP_EPOCH_SSL      
+        use_ssl = epoch >= WARM_UP_EPOCH_SSL      
         for (f_batch, s_batch, y_batch), (f_batch_unl, s_batch_unl) in zip(
             itertools.cycle(dataloader_lab_train), dataloader_unl_train):           
 

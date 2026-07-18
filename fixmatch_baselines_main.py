@@ -150,7 +150,7 @@ if __name__ == "__main__":
         #for f_batch, s_batch, y_batch in dataloader_lab_train:
         start_time = time.time()
         total_loss = torch.zeros((), device=device) 
-        use_ssl = epoch > WARM_UP_EPOCH_SSL
+        use_ssl = epoch >= WARM_UP_EPOCH_SSL
         n_batches = 0
         mask_rate_sum = 0.0        # <-- new
         mask_batches = 0           # <-- new

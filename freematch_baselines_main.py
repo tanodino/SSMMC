@@ -143,7 +143,7 @@ if __name__ == "__main__":
         start_time = time.time()
         total_loss = torch.zeros((), device=device)
         n_batches = 0
-        use_ssl = epoch > WARM_UP_EPOCH_SSL
+        use_ssl = epoch >= WARM_UP_EPOCH_SSL
         mask_rate_sum = 0.0
         mask_batches = 0
         majority_frac_sum = 0.0
@@ -249,7 +249,7 @@ if __name__ == "__main__":
 
             f1_val = f1_score(test_labels, predictions, average="weighted")
             total_loss = total_loss.item()
-            
+
             avg_mask_rate = mask_rate_sum / max(mask_batches, 1)
             avg_majority_frac = majority_frac_sum / max(majority_frac_batches, 1)
             avg_tau_t = tau_t_sum / max(state_batches, 1)              # <-- new
