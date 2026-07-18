@@ -220,6 +220,20 @@ def weighted_nll_loss(p: torch.Tensor, y: torch.Tensor, eps: float = 1e-8) -> to
 def pseudo_label_loss(p_strong: torch.Tensor, p_weak: torch.Tensor, tau: float,
                        eps: float = 1e-8) -> torch.Tensor:
     """FixMatch/FreeMatch-style pseudo-label loss, Eq. 6.
+    Normalization is over the FULL unlabeled batch B_u (per Eq. 6), not over
+    the selected subset — masked-out samples contribute 0.
+    """
+    with torch.no_grad():
+        conf, yhat = p_weak.max(dim=-1)
+        mask = (conf >= tau).to(p_strong.dtype)
+    logp = torch.log(p_strong.clamp(min=eps))
+    per_sample = F.nll_loss(logp, yhat, reduction="none")
+    return (per_sample * mask).mean()
+
+'''
+def pseudo_label_loss(p_strong: torch.Tensor, p_weak: torch.Tensor, tau: float,
+                       eps: float = 1e-8) -> torch.Tensor:
+    """FixMatch/FreeMatch-style pseudo-label loss, Eq. 6.
 
     p_weak:   predictions on the weakly-augmented view, used to select
               high-confidence pseudo-labels.
@@ -232,7 +246,7 @@ def pseudo_label_loss(p_strong: torch.Tensor, p_weak: torch.Tensor, tau: float,
     if mask.sum() == 0:
         return p_strong.new_zeros(())
     return weighted_nll_loss(p_strong[mask], yhat[mask], eps=eps)
-
+'''
 
 def kl_divergence(p_target: torch.Tensor, q_pred: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     """Per-sample KL(p_target || q_pred), both [B, C] probability tensors."""
@@ -418,14 +432,26 @@ class MSCLoss(nn.Module):
         L_C_sup = weighted_nll_loss(out_l["p_C"], labeled_y, cfg.eps)    # Eq. 5, p = p_C
 
         # ---- unlabeled forward passes (weak & strong augmentation) -------
+        '''
         out_uw = model(unlabeled_m1_weak, unlabeled_m2_weak)
         out_us = model(unlabeled_m1_strong, unlabeled_m2_strong)
+        '''
+
+        was_training = model.training
+        model.eval()
+        with torch.no_grad():
+            out_uw = model(unlabeled_m1_weak, unlabeled_m2_weak)
+        if was_training:
+            model.train()
+        
+        out_us = model(unlabeled_m1_strong, unlabeled_m2_strong)
+
 
         # Eq. 6 style pseudo-label losses for each fusion branch
         L_S_unsup = pseudo_label_loss(out_us["p_S"], out_uw["p_S"], cfg.tau, cfg.eps)
         L_C_unsup = pseudo_label_loss(out_us["p_C"], out_uw["p_C"], cfg.tau, cfg.eps)
 
-        if current_epoch > warm_up_epoch_ssl:
+        if current_epoch >= warm_up_epoch_ssl:
             L_S = L_S_sup + cfg.lambda_u * L_S_unsup
             L_C = L_C_sup + cfg.lambda_u * L_C_unsup
         else:
@@ -461,7 +487,7 @@ class MSCLoss(nn.Module):
         r_c = p_C_sub.argmax(dim=-1)
 
         # ---- Eq. 9-11: Label Consistency Guidance -------------------------
-        G = label_consistency_targets(r_1, r_2, y_sub, p_M1_sub, p_M2_sub, cfg.eps)
+        G = label_consistency_targets(r_1, r_2, y_sub, p_M1_sub, p_M2_sub, cfg.eps).detach()
         L_lcg = kl_divergence(G, w_sub, cfg.eps).mean()
 
         # ---- Eq. 12: Modal Reliability Guidance ----------------------------

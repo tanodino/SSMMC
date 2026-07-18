@@ -17,7 +17,7 @@ from torch.cuda.amp import GradScaler, autocast
 from torch.utils.checkpoint import checkpoint
 import os
 import warnings
-from msc import MSCConfig, MSCModel, MSCLoss
+from msc import MSCConfig, MSCModel, MSCLoss, weighted_nll_loss
 import time
 from sklearn.metrics import f1_score
 from torch.cuda.amp import autocast, GradScaler
@@ -177,10 +177,8 @@ if __name__ == "__main__":
             else:
                 with autocast():
                     out = model(f_batch, s_batch)
-                    out_m1 = out["logits_M1"]
-                    out_m2 = out["logits_M2"]
-                    out_c = out["logits_C"]
-                    loss = loss_ce(out_m1, y_batch) + loss_ce(out_m2, y_batch) + loss_ce(out_c, y_batch)
+                    loss = (weighted_nll_loss(out["p_S"], y_batch, config.eps) + weighted_nll_loss(out["p_C"], y_batch, config.eps))                
+                
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
