@@ -342,7 +342,7 @@ def _random_gaussian_blur(kernel_size: int = 5, sigma_range: tuple = (0.1, 2.0))
 _blur_m1 = _random_gaussian_blur()
 _blur_m2 = _random_gaussian_blur()
 
-
+'''
 def _channel_mean_grayscale(x: torch.Tensor) -> torch.Tensor:
     """Generalization of 'grayscale' to arbitrary channel counts: collapse to
     a per-pixel mean across channels, then broadcast back to the original
@@ -350,7 +350,16 @@ def _channel_mean_grayscale(x: torch.Tensor) -> torch.Tensor:
     doesn't apply here."""
     mean = x.mean(dim=1, keepdim=True)
     return mean.expand_as(x)
-
+'''
+def _channel_dropout(x: torch.Tensor, drop_frac: float = 0.3) -> torch.Tensor:
+    b, c = x.shape[0], x.shape[1]
+    keep_mask = (torch.rand(b, c, device=x.device) >= drop_frac).float()
+    # guarantee at least one channel survives per sample
+    all_dropped = keep_mask.sum(dim=1) == 0
+    if all_dropped.any():
+        fallback_idx = torch.randint(0, c, (all_dropped.sum(),), device=x.device)
+        keep_mask[all_dropped, fallback_idx] = 1.0
+    return x * keep_mask.view(b, c, 1, 1)
 
 def strong_augment_pair(x1: torch.Tensor, x2: torch.Tensor) -> tuple:
     """
@@ -364,8 +373,10 @@ def strong_augment_pair(x1: torch.Tensor, x2: torch.Tensor) -> tuple:
     choice = torch.randint(0, 3, (batch_size,), device=x1.device)
 
     cropped_x1, cropped_x2 = _shared_random_resized_crop(x1, x2)
-    x1_options = [cropped_x1, _blur_m1(x1), _channel_mean_grayscale(x1)]
-    x2_options = [cropped_x2, _blur_m2(x2), _channel_mean_grayscale(x2)]
+    #x1_options = [cropped_x1, _blur_m1(x1), _channel_mean_grayscale(x1)]
+    #x2_options = [cropped_x2, _blur_m2(x2), _channel_mean_grayscale(x2)]
+    x1_options = [cropped_x1, _blur_m1(x1), _channel_dropout(x1)]
+    x2_options = [cropped_x2, _blur_m2(x2), _channel_dropout(x2)]
 
     return _select_by_choice(x1_options, choice), _select_by_choice(x2_options, choice)
 

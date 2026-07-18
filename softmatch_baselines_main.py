@@ -117,14 +117,15 @@ if __name__ == "__main__":
 
     if sf_or_fc == "SF":
         model = ScoreFusion(config).to(device)
+        loss_fn = nn.NLLLoss()
     elif sf_or_fc == "FC":
         model = FusionConcat(config).to(device)
+        loss_fn = nn.CrossEntropyLoss() #MSCLoss(config)
     else:
         print("NO METHOD DEFINED")
         exit(0)
-    
+
     model.compile()
-    loss_fn = nn.CrossEntropyLoss() #MSCLoss(config)
     loss_fn_none = nn.CrossEntropyLoss(reduction="none")
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
     scaler = GradScaler()
@@ -157,21 +158,35 @@ if __name__ == "__main__":
             
             with autocast():
                 pred_lab = model(f_batch, s_batch)
-                sup_loss = loss_fn(pred_lab, y_batch)
+                if sf_or_fc == "SF":
+                    sup_loss = loss_fn(torch.log(pred_lab.clamp(min=1e-8)), y_batch)
+                else:
+                    sup_loss = loss_fn(pred_lab, y_batch)
+                
                 if use_ssl:
                     f_weak, s_weak = weak_augment_pair(f_batch_unl, s_batch_unl)
                     f_strong, s_strong = strong_augment_pair(f_batch_unl, s_batch_unl)
 
                     with torch.no_grad():
+                        model.eval()
                         pred_weak = model(f_weak, s_weak)
-                        probs_weak = F.softmax(pred_weak, dim=-1)
+                        if sf_or_fc == "FC":
+                            probs_weak = F.softmax(pred_weak, dim=-1)
+                        else:
+                            probs_weak = pred_weak  # SF already outputs a distribution
                         max_probs, pseudo_labels = probs_weak.max(dim=-1)
-                    
+                        model.train()
+
                     softmatch.update(max_probs)
                     sample_weights = softmatch.weight(max_probs)
 
                     pred_strong = model(f_strong, s_strong)
-                    unsup_loss_per_sample = loss_fn_none(pred_strong, pseudo_labels)
+                    if sf_or_fc == "SF":
+                        log_probs_strong = torch.log(pred_strong.clamp(min=1e-8))
+                        unsup_loss_per_sample = F.nll_loss(log_probs_strong, pseudo_labels, reduction="none")
+                    else:
+                        unsup_loss_per_sample = loss_fn_none(pred_strong, pseudo_labels)
+
                     unsup_loss = (unsup_loss_per_sample * sample_weights).mean()                
                     loss = sup_loss + lambda_u * unsup_loss
                 else:

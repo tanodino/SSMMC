@@ -35,6 +35,7 @@ if __name__ == "__main__":
     perc = sys.argv[4]
     run_id = sys.argv[5]
     sf_or_fc = sys.argv[6] # SF = score fusion / FC = Feature Concat
+    print(sys.argv)
     
     first_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, first_prefix) )
     second_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, second_prefix) )
@@ -122,14 +123,16 @@ if __name__ == "__main__":
 
     if sf_or_fc == "SF":
         model = ScoreFusion(config).to(device)
+        loss_fn = nn.NLLLoss()
     elif sf_or_fc == "FC":
         model = FusionConcat(config).to(device)
+        loss_fn = nn.CrossEntropyLoss() #MSCLoss(config)
     else:
         print("NO METHOD DEFINED")
         exit(0)
     
-    model.compile()
-    loss_fn = nn.CrossEntropyLoss() #MSCLoss(config)
+    #model.compile()
+    
     loss_fn_none = nn.CrossEntropyLoss(reduction="none")
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
     scaler = GradScaler()
@@ -147,6 +150,8 @@ if __name__ == "__main__":
         total_loss = torch.zeros((), device=device) 
         use_ssl = epoch > WARM_UP_EPOCH_SSL
         n_batches = 0
+        mask_rate_sum = 0.0        # <-- new
+        mask_batches = 0           # <-- new
         for (f_batch, s_batch, y_batch), (f_batch_unl, s_batch_unl) in zip(
             itertools.cycle(dataloader_lab_train), dataloader_unl_train):           
 
@@ -160,23 +165,38 @@ if __name__ == "__main__":
             s_batch_unl = s_batch_unl.to(device, non_blocking=True)
             with autocast():
                 pred_lab = model(f_batch, s_batch)
-                sup_loss = loss_fn(pred_lab, y_batch)
-                
+                if sf_or_fc == "SF":
+                    sup_loss = loss_fn(torch.log(pred_lab.clamp(min=1e-8)), y_batch)
+                else:
+                    sup_loss = loss_fn(pred_lab, y_batch)
+                                
                 if use_ssl:
                     f_weak, s_weak = weak_augment_pair(f_batch_unl, s_batch_unl)
                     f_strong, s_strong = strong_augment_pair(f_batch_unl, s_batch_unl)
 
                     with torch.no_grad():
+                        model.eval()
                         pred_weak = model(f_weak, s_weak)
-                        probs_weak = F.softmax(pred_weak, dim=-1)
+                        if sf_or_fc == "FC":
+                            probs_weak = F.softmax(pred_weak, dim=-1)
+                        else:
+                            probs_weak = pred_weak
                         max_probs, pseudo_labels = probs_weak.max(dim=-1)
+                        model.train()
 
                     # FixMatch: fixed threshold, hard 0/1 mask (Sohn et al., 2020, Eq. 6)
                     # -- replaces SoftMatch's EMA-tracked continuous sample_weights.
                     mask = (max_probs >= FIXMATCH_THRESHOLD).float()
+                    mask_rate_sum += mask.mean().item()   # <-- new
+                    mask_batches += 1                     # <-- new
 
                     pred_strong = model(f_strong, s_strong)
-                    unsup_loss_per_sample = loss_fn_none(pred_strong, pseudo_labels)
+                    if sf_or_fc == "SF":
+                        log_probs_strong = torch.log(pred_strong.clamp(min=1e-8))
+                        unsup_loss_per_sample = F.nll_loss(log_probs_strong, pseudo_labels, reduction="none")
+                    else:
+                        unsup_loss_per_sample = loss_fn_none(pred_strong, pseudo_labels)
+                    
                     unsup_loss = (unsup_loss_per_sample * mask).mean()                   
                     loss = sup_loss + lambda_u * unsup_loss
                 else:
@@ -203,10 +223,12 @@ if __name__ == "__main__":
         f1_val = f1_score(test_labels, predictions, average="weighted")
         total_loss = total_loss.item()  
         if epoch % 5 == 0:
+            avg_mask_rate = mask_rate_sum / max(mask_batches, 1)
             print(f"epoch {epoch} "
                 f"total={np.mean(total_loss / max(n_batches, 1)):.4f} "
                 f"elapsed_time={elapsed_time:.2f} "
-                f"F1-score={(f1_val * 100):.2f}")
+                f"F1-score={(f1_val * 100):.2f} "
+                f"mask_rate={avg_mask_rate:.3f}")
             sys.stdout.flush()
     
     model.load_state_dict(ema_weights)
