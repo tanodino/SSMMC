@@ -19,6 +19,7 @@ if __name__ == "__main__":
     first_prefix = sys.argv[3]
     second_prefix = sys.argv[4]
     perc = sys.argv[5]
+    sf_or_fc = sys.argv[6]
     n_splits = 5
     run_ids = range(n_splits)           # ASSUMPTION: run_id in training was "0","1","2","3","4"
                                          # -> adjust `run_ids` below if your run_ids are named differently
