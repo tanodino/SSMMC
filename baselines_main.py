@@ -21,8 +21,6 @@ import warnings
 from model import SFFCConfig, ScoreFusion, FusionConcat
 import time
 from sklearn.metrics import f1_score
-
-from sklearn.metrics import f1_score
 import copy
 
 torch.backends.cudnn.benchmark = True
@@ -126,14 +124,15 @@ if __name__ == "__main__":
 
     if sf_or_fc == "SF":
         model = ScoreFusion(config).to(device)
+        loss_fn = nn.NLLLoss()
     elif sf_or_fc == "FC":
         model = FusionConcat(config).to(device)
+        loss_fn = nn.CrossEntropyLoss() #MSCLoss(config)
     else:
         print("NO METHOD DEFINED")
         exit(0)
     
     model.compile()
-    loss_fn = nn.CrossEntropyLoss() #MSCLoss(config)
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
     scaler = GradScaler()
     print("model created and compiled")
@@ -157,7 +156,10 @@ if __name__ == "__main__":
             
             with autocast():
                 pred = model(f_batch, s_batch)
-                loss = loss_fn(pred, y_batch)
+                if sf_or_fc == "SF":
+                    loss = loss_fn(torch.log(pred.clamp(min=1e-8)), y_batch)
+                else:
+                    loss = loss_fn(pred, y_batch)
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
