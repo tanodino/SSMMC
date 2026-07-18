@@ -203,17 +203,18 @@ if __name__ == "__main__":
 
         if epoch >= WARM_UP_EPOCH_EMA:
             ema_weights = cumulate_EMA(model, ema_weights, MOMENTUM_EMA)
-            current_state_dict = copy.deepcopy(model.state_dict())
-            model.load_state_dict(ema_weights)
-            predictions, test_labels = evaluation(model, dataloader_test, device)    
-            model.load_state_dict(current_state_dict)
-        else:
-            predictions, test_labels = evaluation(model, dataloader_test, device)
 
-        f1_val = f1_score(test_labels, predictions, average="weighted")
-
-        total_loss = total_loss.item()  
         if epoch % 5 == 0:
+            if epoch >= WARM_UP_EPOCH_EMA:
+                current_state_dict = copy.deepcopy(model.state_dict())
+                model.load_state_dict(ema_weights)
+                predictions, test_labels = evaluation(model, dataloader_test, device)    
+                model.load_state_dict(current_state_dict)
+            else:
+                predictions, test_labels = evaluation(model, dataloader_test, device)
+
+            f1_val = f1_score(test_labels, predictions, average="weighted")
+            total_loss = total_loss.item()  
             print(f"epoch {epoch} "
                 f"total={np.mean(total_loss / max(n_batches, 1)):.4f} "
                 f"elapsed_time={elapsed_time:.2f} "

@@ -236,16 +236,20 @@ if __name__ == "__main__":
 
         if epoch >= WARM_UP_EPOCH_EMA:
             ema_weights = cumulate_EMA(model, ema_weights, MOMENTUM_EMA)
-            current_state_dict = copy.deepcopy(model.state_dict())
-            model.load_state_dict(ema_weights)
-            predictions, test_labels = evaluation(model, dataloader_test, device)    
-            model.load_state_dict(current_state_dict)
-        else:
-            predictions, test_labels = evaluation(model, dataloader_test, device)
 
-        f1_val = f1_score(test_labels, predictions, average="weighted")
-        total_loss = total_loss.item()
+
         if epoch % 5 == 0:
+            if epoch >= WARM_UP_EPOCH_EMA:
+                current_state_dict = copy.deepcopy(model.state_dict())
+                model.load_state_dict(ema_weights)
+                predictions, test_labels = evaluation(model, dataloader_test, device)    
+                model.load_state_dict(current_state_dict)
+            else:
+                predictions, test_labels = evaluation(model, dataloader_test, device)
+
+            f1_val = f1_score(test_labels, predictions, average="weighted")
+            total_loss = total_loss.item()
+            
             avg_mask_rate = mask_rate_sum / max(mask_batches, 1)
             avg_majority_frac = majority_frac_sum / max(majority_frac_batches, 1)
             avg_tau_t = tau_t_sum / max(state_batches, 1)              # <-- new
