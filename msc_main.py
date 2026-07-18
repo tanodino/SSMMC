@@ -141,9 +141,6 @@ if __name__ == "__main__":
     step = 0
     ema_weights = None
     for epoch in range(EPOCHS):
-        gc.collect()
-        torch.cuda.empty_cache()
-        #for f_batch, s_batch, y_batch in dataloader_lab_train:
         use_ssl = epoch >= WARM_UP_EPOCH_SSL
         total_loss = torch.zeros((), device=device) 
         start_time = time.time()
