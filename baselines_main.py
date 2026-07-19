@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingWarm
 import time
 import sys
 from torch.utils.data import TensorDataset, DataLoader
-from functions import evaluation, weak_augment_pair, strong_augment_pair, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS
+from functions import evaluation, weak_augment_pair, strong_augment_pair, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, load_pretrained_encoders
 import random
 import bitsandbytes as bnb
 from torch.cuda.amp import GradScaler, autocast
@@ -28,6 +28,8 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 
+
+
 if __name__ == "__main__":
     batch_size = 16
     dataset_path = sys.argv[1]
@@ -36,6 +38,7 @@ if __name__ == "__main__":
     perc = sys.argv[4]
     run_id = sys.argv[5]
     sf_or_fc = sys.argv[6] # SF = score fusion / FC = Feature Concat
+    pretrained_path = sys.argv[7] if len(sys.argv) > 7 else None   # <-- new, optional
     
     first_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, first_prefix) )
     second_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, second_prefix) )
@@ -131,6 +134,10 @@ if __name__ == "__main__":
     else:
         print("NO METHOD DEFINED")
         exit(0)
+
+    if pretrained_path is not None:                                    # <-- new
+        load_pretrained_encoders(model, pretrained_path, device)       # <-- new
+
     
     model.compile()
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
