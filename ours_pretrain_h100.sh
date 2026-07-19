@@ -12,6 +12,8 @@
 #SBATCH --constraint=h100
 #SBATCH --account=xfp@h100
 
+
+
 module purge
 module load arch/h100
 module load pytorch-gpu/py3/2.4.0
