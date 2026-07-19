@@ -22,9 +22,9 @@ export PYTHONUSERBASE=$WORK/.local
 
 cd $WORK/SSMMC/SSMMC
 
-# EUROSAT SAR MS
+#e.g. EUROSAT SAR MS
 #$1: directory of the data
 #$2: First Data Modality
 #$3: Second Data Modality
 
-srun python pretrain.py EUROSAT SAR MS
+srun python pretrain.py $1 $2 $3
