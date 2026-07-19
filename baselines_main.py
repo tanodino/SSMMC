@@ -23,6 +23,9 @@ import time
 from sklearn.metrics import f1_score
 import copy
 
+#warnings.filterwarnings("ignore", category=FutureWarning, module="torch.cuda.amp")
+warnings.filterwarnings("ignore")
+
 torch.backends.cudnn.benchmark = True
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -141,7 +144,7 @@ if __name__ == "__main__":
     
     model.compile()
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
-    scaler = GradScaler()
+    scaler = GradScaler('cuda')
     print("model created and compiled")
     sys.stdout.flush()
 
@@ -161,7 +164,7 @@ if __name__ == "__main__":
             s_batch = s_batch.to(device, non_blocking=True)
             y_batch = y_batch.to(device, non_blocking=True)
             
-            with autocast():
+            with autocast('cuda'):
                 pred = model(f_batch, s_batch)
                 if sf_or_fc == "SF":
                     loss = loss_fn(torch.log(pred.clamp(min=1e-8)), y_batch)
