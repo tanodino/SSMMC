@@ -15,8 +15,27 @@ from typing import Dict, List, Union
 import torch.autograd as autograd
 from dataclasses import dataclass
 import os
+import functools
 
 import socket
+
+
+class ResNet18Encoder(nn.Module):
+    def __init__(self, img_size: int = None, in_chans: int = 3, gn_groups: int = 32):
+        super().__init__()
+
+        #norm_layer = functools.partial(nn.GroupNorm, gn_groups)
+        #backbone = resnet18(weights=None, norm_layer=norm_layer)
+        backbone = resnet18(weights=None)
+
+        backbone.conv1 = nn.Conv2d(in_chans, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        nn.init.kaiming_normal_(backbone.conv1.weight, mode="fan_out", nonlinearity="relu")
+
+        self.backbone = nn.Sequential(*list(backbone.children())[:-1])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.backbone(x).flatten(1)
+
 
 ############## KDMVC ####################
 
@@ -245,6 +264,11 @@ class MLPHead(nn.Module):
 class ScoreFusion(nn.Module):
     def __init__(self, config: SFFCConfig):
         super().__init__()
+        '''
+        self.modality_1_encoder = ResNet18Encoder(in_chans=config.in_chans_m1)
+        self.modality_2_encoder = ResNet18Encoder(in_chans=config.in_chans_m2)
+
+        '''
         self.modality_1_encoder = ViTEncoder(
             img_size = config.img_size_m1,
             patch_size = config.patch_size_m1,
@@ -256,6 +280,7 @@ class ScoreFusion(nn.Module):
             patch_size = config.patch_size_m2,
             in_chans = config.in_chans_m2
         )
+        
         self.head_M1 = MLPHead(config.hidden_dim,
                                 config.num_classes, config.dropout)          # Eq. 1
         self.head_M2 = MLPHead(config.hidden_dim,
@@ -268,6 +293,7 @@ class ScoreFusion(nn.Module):
         logits_M2 = self.head_M2(f_2)
         prob_1 = F.softmax(logits_M1, dim=-1)
         prob_2 = F.softmax(logits_M2, dim=-1)
+        #return prob_2
         return (prob_1 + prob_2) / 2
 
     def predict(self, f_1: torch.Tensor, f_2: torch.Tensor):

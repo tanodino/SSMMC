@@ -342,7 +342,7 @@ def _random_gaussian_blur(kernel_size: int = 5, sigma_range: tuple = (0.1, 2.0))
 _blur_m1 = _random_gaussian_blur()
 _blur_m2 = _random_gaussian_blur()
 
-'''
+
 def _channel_mean_grayscale(x: torch.Tensor) -> torch.Tensor:
     """Generalization of 'grayscale' to arbitrary channel counts: collapse to
     a per-pixel mean across channels, then broadcast back to the original
@@ -350,7 +350,7 @@ def _channel_mean_grayscale(x: torch.Tensor) -> torch.Tensor:
     doesn't apply here."""
     mean = x.mean(dim=1, keepdim=True)
     return mean.expand_as(x)
-'''
+
 def _channel_dropout(x: torch.Tensor, drop_frac: float = 0.3) -> torch.Tensor:
     b, c = x.shape[0], x.shape[1]
     keep_mask = (torch.rand(b, c, device=x.device) >= drop_frac).float()
@@ -361,6 +361,37 @@ def _channel_dropout(x: torch.Tensor, drop_frac: float = 0.3) -> torch.Tensor:
         keep_mask[all_dropped, fallback_idx] = 1.0
     return x * keep_mask.view(b, c, 1, 1)
 
+
+def _sample_noise_std(batch_size: int, device: torch.device, std_range: tuple = (0.01, 0.15)) -> torch.Tensor:
+    """Fresh per-sample noise std drawn uniformly from std_range each call."""
+    return torch.empty(batch_size, device=device).uniform_(*std_range)
+
+
+def _additive_gaussian_noise(x: torch.Tensor, std_range: tuple = (0.01, 0.15)) -> torch.Tensor:
+    """
+    Add zero-mean Gaussian noise to each sample, with an independent std per
+    sample (not shared across the batch, matching _random_gaussian_blur's
+    same_on_batch=False behavior). Channel-agnostic -- identical noise model
+    applied to every band independently, so it works for any in_chans count.
+
+    NOTE: additive Gaussian noise is a generic sensor-noise model, appropriate
+    for multispectral reflectance data. It is NOT the physically correct noise
+    model for SAR -- SAR speckle is multiplicative and gamma-distributed (see
+    earlier discussion), not additive Gaussian. If applying this to both
+    modalities via a shared strong_augment_pair choice, consider using this
+    only for the MS branch and a separate speckle-noise op for SAR, rather
+    than the same additive-noise call on both.
+
+    x         : (B, C, H, W) tensor, assumed already normalized (adjust
+                std_range if your data isn't roughly unit-scale)
+    std_range : (min_std, max_std) uniform sampling range for noise magnitude
+    """
+    b = x.shape[0]
+    std = _sample_noise_std(b, x.device, std_range).view(b, 1, 1, 1)
+    noise = torch.randn_like(x) * std
+    return x + noise
+
+'''
 def strong_augment_pair(x1: torch.Tensor, x2: torch.Tensor) -> tuple:
     """
     Sample ONE strong op per sample -- random-resized-crop, gaussian blur, or
@@ -375,10 +406,209 @@ def strong_augment_pair(x1: torch.Tensor, x2: torch.Tensor) -> tuple:
     cropped_x1, cropped_x2 = _shared_random_resized_crop(x1, x2)
     #x1_options = [cropped_x1, _blur_m1(x1), _channel_mean_grayscale(x1)]
     #x2_options = [cropped_x2, _blur_m2(x2), _channel_mean_grayscale(x2)]
-    x1_options = [cropped_x1, _blur_m1(x1), _channel_dropout(x1)]
-    x2_options = [cropped_x2, _blur_m2(x2), _channel_dropout(x2)]
+    #x1_options = [cropped_x1, _blur_m1(x1), _channel_dropout(x1)]
+    #x2_options = [cropped_x2, _blur_m2(x2), _channel_dropout(x2)]
+    x1_options = [_channel_mean_grayscale(x1), _blur_m1(x1), _channel_dropout(x1)]
+    x2_options = [_channel_mean_grayscale(x2), _blur_m2(x2), _channel_dropout(x2)]
 
     return _select_by_choice(x1_options, choice), _select_by_choice(x2_options, choice)
+'''
+###########################@
+
+# ─────────────────────────────────────────────
+#  AUGMENTATION BUILDING BLOCKS
+# ─────────────────────────────────────────────
+'''
+class ProbabilisticApply(nn.Module):
+    """Applies a module with probability p -- ONE coin flip per forward call,
+    applied to the whole batch (not per-sample). This matches the semantics
+    of the provided snippet; note it differs from the rest of this codebase's
+    per-sample randomization style (e.g. _select_by_choice). Flag if you'd
+    rather have a per-sample version instead."""
+    def __init__(self, module: nn.Module, p: float = 0.5):
+        super().__init__()
+        self.module = module
+        self.p = p
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if torch.rand(1).item() < self.p:
+            return self.module(x)
+        return x
+'''
+
+class ProbabilisticApply(nn.Module):
+    """Applies a module with probability p, decided INDEPENDENTLY per sample
+    in the batch (not one shared coin-flip for the whole batch). Requires
+    the wrapped module to preserve input shape, since augmented and
+    original outputs are blended element-wise via a per-sample mask."""
+    def __init__(self, module: nn.Module, p: float = 0.5):
+        super().__init__()
+        self.module = module
+        self.p = p
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b = x.shape[0]
+        apply_mask = (torch.rand(b, device=x.device) < self.p)
+        if not apply_mask.any():
+            return x
+        if apply_mask.all():
+            return self.module(x)
+
+        # compute the augmented version for the whole batch in one call
+        # (cheaper than looping), then select per-sample via the mask
+        augmented = self.module(x)
+        mask = apply_mask.view(b, *([1] * (x.dim() - 1)))
+        return torch.where(mask, augmented, x)
+
+class ChannelDropout(nn.Module):
+    """Channel-agnostic substitute for grayscale collapse: zeroes a random
+    subset of channels per sample instead of averaging all channels into
+    one. Preserves inter-band contrast in surviving channels -- see earlier
+    discussion on why channel-mean grayscale destroys the spectral signal
+    multispectral/SAR classification depends on."""
+    def __init__(self, drop_frac: float = 0.3):
+        super().__init__()
+        self.drop_frac = drop_frac
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, c = x.shape[0], x.shape[1]
+        keep_mask = (torch.rand(b, c, device=x.device) >= self.drop_frac).float()
+        all_dropped = keep_mask.sum(dim=1) == 0
+        if all_dropped.any():
+            fallback_idx = torch.randint(0, c, (int(all_dropped.sum()),), device=x.device)
+            keep_mask[all_dropped, fallback_idx] = 1.0
+        return x * keep_mask.view(b, c, 1, 1)
+
+
+class AdditiveGaussianNoise(nn.Module):
+    """Per-sample zero-mean Gaussian noise, independent std per sample."""
+    def __init__(self, std_range: tuple = (0.01, 0.15)):
+        super().__init__()
+        self.std_range = std_range
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b = x.shape[0]
+        std = torch.empty(b, 1, 1, 1, device=x.device).uniform_(*self.std_range)
+        return x + torch.randn_like(x) * std
+
+
+class AdditiveShift(nn.Module):
+    """Generic additive offset (replaces RGB-specific 'brightness'). No hard
+    clamp by default -- set clamp_range explicitly ONLY if you've confirmed
+    your normalization convention (e.g. (0,1) for min-max data). Leave None
+    for standardized (zero-mean/unit-std) data, where a hard clamp would
+    silently bias the distribution."""
+    def __init__(self, max_delta: float = 0.2, clamp_range: tuple = None):
+        super().__init__()
+        self.max_delta = max_delta
+        self.clamp_range = clamp_range
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        delta = torch.empty(x.shape[0], 1, 1, 1, device=x.device).uniform_(
+            -self.max_delta, self.max_delta
+        )
+        out = x + delta
+        if self.clamp_range is not None:
+            out = out.clamp(*self.clamp_range)
+        return out
+
+
+# ─────────────────────────────────────────────
+#  PER-MODALITY COMPOSED PIPELINE
+# ─────────────────────────────────────────────
+class ModalityAugmentationGPU(nn.Module):
+    def __init__(self, blur_kernel=(3, 3), blur_sigma=(0.1, 2.0), blur_p=0.5,
+                 noise_std_range=(0.01, 0.15), noise_p=0.5,
+                 dropout_frac=0.3, dropout_p=0.2,
+                 shift_max_delta=0.2, shift_p=0.8, shift_clamp_range=None,
+                 contrast_range=(0.8, 1.2), contrast_p=0.8):
+        super().__init__()
+        self.shift = ProbabilisticApply(AdditiveShift(shift_max_delta, shift_clamp_range), p=shift_p)
+        #self.contrast = ProbabilisticApply(K.RandomContrast(contrast=contrast_range, p=.5), p=contrast_p)
+        self.dropout = ProbabilisticApply(ChannelDropout(dropout_frac), p=dropout_p)
+        self.noise = ProbabilisticApply(AdditiveGaussianNoise(noise_std_range), p=noise_p)
+        self.blur = ProbabilisticApply(K.RandomGaussianBlur(blur_kernel, blur_sigma, p=.5), p=blur_p)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.shift(x)
+        #x = self.contrast(x)
+        x = self.dropout(x)
+        x = self.noise(x)
+        x = self.blur(x)
+        return x
+
+# ─────────────────────────────────────────────
+#  PAIRED STRONG AUGMENTATION (drop-in replacement)
+# ─────────────────────────────────────────────
+
+# Per-modality hyperparameters differ deliberately: SAR (few channels) gets
+# a lower dropout_frac than MS (more channels), since dropping 1 of 2
+# channels is a much coarser perturbation than dropping ~4 of 13. Tune both
+# once you know your actual band counts.
+_strong_aug = ModalityAugmentationGPU(
+    shift_p=0.8, shift_max_delta=0.1, shift_clamp_range=None,
+    contrast_p=0.8, contrast_range=(0.8, 1.2),
+    dropout_p=0.2, dropout_frac=0.15,
+    noise_p=0.5, noise_std_range=(0.01, 0.10),
+    blur_p=0.5, blur_kernel=(3, 3), blur_sigma=(0.1, 2.0),
+)
+
+'''
+_strong_aug_ms = ModalityAugmentationGPU(
+    dropout_frac=0.30, dropout_p=0.3,
+    noise_std_range=(0.01, 0.15), noise_p=0.5,
+    blur_p=0.5,
+    shift_p=0.3, shift_max_delta=0.2,
+    contrast_p=0.0,
+)
+'''
+
+
+def strong_augment_pair(x1: torch.Tensor, x2: torch.Tensor,
+                          crop_p: float = 0.5, flip_p: float = 0.5) -> tuple:
+    """
+    Full composed strong augmentation for paired (x1=SAR, x2=MS) inputs.
+
+    Spatial component (crop, then horizontal/vertical flip) is SHARED across
+    modalities -- same region/orientation applied to both -- to preserve
+    cross-modal spatial alignment. Both crop and each flip axis are now
+    independently conditional (per SAMPLE, not per batch), controlled by
+    crop_p / flip_p, rather than crop being unconditional and flip fixed
+    at 0.5. This means a sample can end up with any combination: full-frame
+    no-flip (mildest), cropped + both flips (strongest), or anything between.
+
+    Spectral/radiometric components (shift, contrast, dropout, noise, blur)
+    are applied INDEPENDENTLY per modality via _strong_aug_sar/_strong_aug_ms,
+    matching real, independent degradation processes per sensor.
+    """
+    b = x1.shape[0]
+
+    crop_mask = (torch.rand(b, device=x1.device) < crop_p)
+    if crop_mask.any():
+        if crop_mask.all():
+            x1, x2 = _shared_random_resized_crop(x1, x2)
+        else:
+            idx = crop_mask.nonzero(as_tuple=True)[0]
+            c1, c2 = _shared_random_resized_crop(x1[idx], x2[idx])
+            x1 = x1.clone()
+            x2 = x2.clone()
+            x1[idx], x2[idx] = c1, c2
+
+    flip_h = torch.rand(b, device=x1.device) < flip_p
+    flip_v = torch.rand(b, device=x1.device) < flip_p
+    if flip_h.any():
+        x1 = x1.clone() if not crop_mask.any() else x1
+        x2 = x2.clone() if not crop_mask.any() else x2
+        x1[flip_h] = torch.flip(x1[flip_h], dims=[-1])
+        x2[flip_h] = torch.flip(x2[flip_h], dims=[-1])
+    if flip_v.any():
+        x1[flip_v] = torch.flip(x1[flip_v], dims=[-2])
+        x2[flip_v] = torch.flip(x2[flip_v], dims=[-2])
+
+    x1 = _strong_aug(x1)
+    x2 = _strong_aug(x2)
+    return x1, x2
+
 
 ###########
 

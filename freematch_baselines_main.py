@@ -30,6 +30,7 @@ if __name__ == "__main__":
     perc = sys.argv[4]
     run_id = sys.argv[5]
     sf_or_fc = sys.argv[6] # SF = score fusion / FC = Feature Concat
+    print(sys.argv)
     
     first_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, first_prefix) )
     second_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, second_prefix) )

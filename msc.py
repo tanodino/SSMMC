@@ -74,7 +74,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from model import ViTEncoder, MLPHead
+from model import ViTEncoder, MLPHead, ResNet18Encoder
 
 
 # ==========================================================================
@@ -139,6 +139,11 @@ class MSCModel(nn.Module):
         super().__init__()
         #self.modality_1_encoder = modality_1_encoder
         #self.modality_2_encoder = modality_2_encoder
+        '''
+        self.modality_1_encoder = ResNet18Encoder(in_chans=config.in_chans_m1)
+        self.modality_2_encoder = ResNet18Encoder(in_chans=config.in_chans_m2)
+        
+        '''
         self.modality_1_encoder = ViTEncoder(
             img_size = config.img_size_m1,
             patch_size = config.patch_size_m1,
@@ -150,6 +155,8 @@ class MSCModel(nn.Module):
             patch_size = config.patch_size_m2,
             in_chans = config.in_chans_m2
         )
+        
+        
 
         self.cfg = config
 
