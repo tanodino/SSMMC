@@ -85,6 +85,7 @@ from functions import evaluation, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA,
 from model import SFFCConfig, ViTEncoder, KDMvCModel  # ViTEncoder import assumed available here
 from kdmvc_losses import KDMvCWeighting, ClassAwareContrastiveLoss, soft_cross_entropy
 import copy
+import warnings
 warnings.filterwarnings("ignore")
 warnings.filterwarnings("ignore", category=FutureWarning, module="torch.cuda.amp")
 
