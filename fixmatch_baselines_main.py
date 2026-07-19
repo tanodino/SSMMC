@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingWarm
 import time
 import sys
 from torch.utils.data import TensorDataset, DataLoader
-from functions import evaluation, weak_augment_pair, strong_augment_pair, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, WARM_UP_EPOCH_SSL, RATIO_LABELED_UNLABELED_BATCHES
+from functions import evaluation, weak_augment_pair, strong_augment_pair, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, WARM_UP_EPOCH_SSL, RATIO_LABELED_UNLABELED_BATCHES, load_pretrained_encoders
 import random
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.checkpoint import checkpoint
@@ -21,6 +21,12 @@ from model import SFFCConfig, ScoreFusion, FusionConcat
 import time
 from sklearn.metrics import f1_score
 import copy
+warnings.filterwarnings("ignore")
+
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 
 
 
@@ -37,6 +43,7 @@ if __name__ == "__main__":
     perc = sys.argv[4]
     run_id = sys.argv[5]
     sf_or_fc = sys.argv[6] # SF = score fusion / FC = Feature Concat
+    pretrained_path = sys.argv[7] if len(sys.argv) > 7 else None   # <-- new, optional
     print(sys.argv)
     
     first_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, first_prefix) )
@@ -132,7 +139,10 @@ if __name__ == "__main__":
     else:
         print("NO METHOD DEFINED")
         exit(0)
-    
+
+    if pretrained_path is not None:                                    # <-- new
+        load_pretrained_encoders(model, pretrained_path, device)       # <-- new
+
     model.compile()
     
     loss_fn_none = nn.CrossEntropyLoss(reduction="none")
