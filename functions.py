@@ -39,6 +39,17 @@ from kornia.augmentation import AugmentationSequential
 
 from kornia.geometry.transform import crop_and_resize
 
+
+def load_pretrained_encoders(model, path: str, device: str, strict: bool = True):
+    """Loads modality_1_encoder / modality_2_encoder weights saved by
+    save_pretrained_encoders(...) in the pretraining script. Must be called
+    BEFORE model.compile() -- compiling wraps the module and would require
+    stripping a _orig_mod. prefix on every subsequent load otherwise."""
+    encoders_state = torch.load(path, map_location=device)
+    model.modality_1_encoder.load_state_dict(encoders_state["modality_1"], strict=strict)
+    model.modality_2_encoder.load_state_dict(encoders_state["modality_2"], strict=strict)
+    print("Loaded pretrained encoder weights from %s" % path)
+
 '''
 def _select_by_choice(options: list, choice: torch.Tensor) -> torch.Tensor:
     """
@@ -625,7 +636,7 @@ TH_FIXMATCH = .95
 WARM_UP_EPOCH_EMA = 30
 warmup_epochs = 5
 max_epochs = 500
-pretraining_max_epochs = 900
+pretraining_max_epochs = 5000
 pretraining_batch_size = 512
 decur_lambd = 0.0051
 WARM_UP_EPOCH_SSL = 10
