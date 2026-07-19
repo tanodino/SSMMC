@@ -120,6 +120,14 @@ torch.backends.cudnn.benchmark = True
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
+def freeze_pretrained_encoders(model: "KDMvCModel"):
+    """Freezes ONLY the ViT encoder inside each ViewSpecificExtractor,
+    leaving proj_net, g_shared, fusion, and g_fusion trainable."""
+    for extractor in model.extractors:
+        for p in extractor.encoder.parameters():
+            p.requires_grad = False
+
+
 def build_vit_encoder(img_size, patch_size, in_chans):
     """
     CONFIRMED against model.py. Mirrors exactly how ScoreFusion/FusionConcat
@@ -227,6 +235,8 @@ if __name__ == "__main__":
 
     if pretrained_path is not None:                                    # <-- new
         load_pretrained_encoders_kdmvc(model, pretrained_path, device)       # <-- new
+        freeze_pretrained_encoders(model) 
+
 
     model.compile()
     weighting = KDMvCWeighting(num_classes=n_classes, beta=DA_BETA, device=device)
@@ -252,6 +262,8 @@ if __name__ == "__main__":
         # ================================================================
         model.train()
         model.set_specific_trainable(True)
+        if pretrained_path is not None:
+            freeze_pretrained_encoders(model)
 
         n_batches = 0
         for (f_batch, s_batch, y_batch), (f_batch_unl, s_batch_unl) in zip(
@@ -353,6 +365,8 @@ if __name__ == "__main__":
                 n_batches += 1
 
             model.set_specific_trainable(True)  # unfreeze for next epoch's Phase 1
+            if pretrained_path is not None:
+                freeze_pretrained_encoders(model)
 
         elapsed_time = time.time() - start_time
 
