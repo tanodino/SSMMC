@@ -300,6 +300,30 @@ class ScoreFusion(nn.Module):
         return self.forward(f_1, f_2)
 
 
+class PretrainModel(nn.Module):
+    def __init__(self, config: SFFCConfig):
+        super().__init__()
+        self.modality_1_encoder = ViTEncoder(
+            img_size = config.img_size_m1,
+            patch_size = config.patch_size_m1,
+            in_chans = config.in_chans_m1
+        )
+        
+        self.modality_2_encoder = ViTEncoder(
+            img_size = config.img_size_m2,
+            patch_size = config.patch_size_m2,
+            in_chans = config.in_chans_m2
+        )
+        
+        self.projector_m1 = nn.Sequential(nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(), nn.Linear(512, 128), nn.BatchNorm1d(128))
+        self.projector_m2 = nn.Sequential(nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(), nn.Linear(512, 128), nn.BatchNorm1d(128))
+
+    def forward(self, x1, x2):        
+        cls_token_m1 = self.modality_1_encoder(x1)
+        cls_token_m2 = self.modality_2_encoder(x2)
+        return cls_token_m1, cls_token_m2, self.projector_m1(cls_token_m1), self.projector_m2(cls_token_m2)
+
+
 
 class FusionConcat(nn.Module):
     def __init__(self, config: SFFCConfig):
