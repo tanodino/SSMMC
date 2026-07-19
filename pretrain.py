@@ -9,7 +9,7 @@ from model import ViTEncoder
 import time
 import sys
 from torch.utils.data import TensorDataset, DataLoader
-from functions import evaluation, strong_augment_pair, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, NTXentLoss
+from functions import evaluation, strong_augment_pair, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, NTXentLoss, pretraining_max_epochs
 import random
 import bitsandbytes as bnb
 from torch.cuda.amp import GradScaler, autocast
@@ -143,7 +143,8 @@ if __name__ == "__main__":
     print("model created and compiled")
     sys.stdout.flush()
 
-    for epoch in range(start_epoch, EPOCHS):
+    #for epoch in range(start_epoch, EPOCHS):
+    for epoch in range(start_epoch, pretraining_max_epochs):
         start_time = time.time()
         total_loss = torch.zeros((), device=device)
         n_batches = 0
