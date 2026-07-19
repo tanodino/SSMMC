@@ -81,10 +81,16 @@ from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import TensorDataset, DataLoader
 from sklearn.metrics import f1_score
 
-from functions import evaluation, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, WARM_UP_EPOCH_SSL, RATIO_LABELED_UNLABELED_BATCHES
+from functions import evaluation, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, WARM_UP_EPOCH_SSL, RATIO_LABELED_UNLABELED_BATCHES, load_pretrained_encoders_kdmvc
 from model import SFFCConfig, ViTEncoder, KDMvCModel  # ViTEncoder import assumed available here
 from kdmvc_losses import KDMvCWeighting, ClassAwareContrastiveLoss, soft_cross_entropy
 import copy
+warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=FutureWarning, module="torch.cuda.amp")
+
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 # ----------------------------------------------------------------------
 # KDMvC-specific hyperparameters (paper Sec. 4.1.3, adapted where noted)
@@ -134,6 +140,7 @@ if __name__ == "__main__":
     second_prefix = sys.argv[3]
     perc = sys.argv[4]
     run_id = sys.argv[5]
+    pretrained_path = sys.argv[6] if len(sys.argv) > 7 else None   # <-- new, optional
     print(sys.argv)
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
@@ -216,6 +223,10 @@ if __name__ == "__main__":
     ).to(device)
     print("model created")
     sys.stdout.flush()
+
+    if pretrained_path is not None:                                    # <-- new
+        load_pretrained_encoders_kdmvc(model, pretrained_path, device)       # <-- new
+
     model.compile()
     weighting = KDMvCWeighting(num_classes=n_classes, beta=DA_BETA, device=device)
     contrastive_loss_fn = ClassAwareContrastiveLoss(temperature=CONTRASTIVE_TAU)

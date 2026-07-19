@@ -39,6 +39,16 @@ from kornia.augmentation import AugmentationSequential
 
 from kornia.geometry.transform import crop_and_resize
 
+def load_pretrained_encoders_kdmvc(model: "KDMvCModel", path: str, device: str, strict: bool = True):
+    """Loads modality_1_encoder / modality_2_encoder weights saved by
+    save_pretrained_encoders(...) into KDMvCModel's two ViewSpecificExtractor
+    instances. Must be called BEFORE model.compile() / torch.compile(model)
+    -- compiling wraps the module and would require stripping a
+    _orig_mod. prefix on every subsequent load otherwise."""
+    encoders_state = torch.load(path, map_location=device)
+    model.extractors[0].encoder.load_state_dict(encoders_state["modality_1"], strict=strict)
+    model.extractors[1].encoder.load_state_dict(encoders_state["modality_2"], strict=strict)
+    print("Loaded pretrained encoder weights into KDMvCModel from %s" % path)
 
 def load_pretrained_encoders(model, path: str, device: str, strict: bool = True):
     """Loads modality_1_encoder / modality_2_encoder weights saved by
