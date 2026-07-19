@@ -75,9 +75,6 @@ if __name__ == "__main__":
     dataset_path = sys.argv[1]
     first_prefix = sys.argv[2]
     second_prefix = sys.argv[3]
-    perc = sys.argv[4]
-    run_id = sys.argv[5]
-    sf_or_fc = sys.argv[6]  # unused by pretraining itself, kept for CLI consistency
     shared_unshared = 50
     USE_GRAD_CHECKPOINTING = True  # set False to disable
 
