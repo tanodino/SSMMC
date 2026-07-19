@@ -39,6 +39,15 @@ from kornia.augmentation import AugmentationSequential
 
 from kornia.geometry.transform import crop_and_resize
 
+def freeze_pretrained_encoders(model):
+    """Freezes modality_1_encoder / modality_2_encoder, leaving every other
+    parameter (classification heads, reliability nets, etc.) trainable."""
+    for p in model.modality_1_encoder.parameters():
+        p.requires_grad = False
+    for p in model.modality_2_encoder.parameters():
+        p.requires_grad = False
+
+
 def load_pretrained_encoders_kdmvc(model: "KDMvCModel", path: str, device: str, strict: bool = True):
     """Loads modality_1_encoder / modality_2_encoder weights saved by
     save_pretrained_encoders(...) into KDMvCModel's two ViewSpecificExtractor
