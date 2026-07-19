@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingWarm
 import time
 import sys
 from torch.utils.data import TensorDataset, DataLoader
-from functions import evaluation, weak_augment_pair, strong_augment_pair, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, load_pretrained_encoders
+from functions import evaluation, weak_augment_pair, strong_augment_pair, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, load_pretrained_encoders, freeze_pretrained_encoders
 import random
 import bitsandbytes as bnb
 #from torch.amp import GradScaler, autocast
@@ -141,7 +141,7 @@ if __name__ == "__main__":
 
     if pretrained_path is not None:                                    # <-- new
         load_pretrained_encoders(model, pretrained_path, device)       # <-- new
-
+        freeze_pretrained_encoders(model)
     
     model.compile()
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
