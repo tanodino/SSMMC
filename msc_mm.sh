@@ -25,7 +25,7 @@ cd $WORK/SSMMC/SSMMC
 # $4 - per-class labels
 # $5 - Fusion Model (SF / FC)
 
-for i in $(seq 0 4)
+for i in $(seq 3 4)
 do
     srun python msc_main.py $1 $2 $3 $4 $i $5
 done

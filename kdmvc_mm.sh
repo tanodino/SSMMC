@@ -25,7 +25,7 @@ cd $WORK/SSMMC/SSMMC
 # $4 - per-class labels
 # $5 - Fusion Model (SF / FC)
 
-for i in $(seq 0 4)
+for i in $(seq 2 4)
 do
     srun python kdmvc_training.py $1 $2 $3 $4 $i $5
 done
