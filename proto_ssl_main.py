@@ -160,6 +160,25 @@ def sharpen(p: torch.Tensor, T: float = 0.5) -> torch.Tensor:
     return p_sharp / p_sharp.sum(dim=1, keepdim=True)
 
 
+def consistency_loss_l1(probs_weak: torch.Tensor, probs_strong: torch.Tensor,
+                         sharpen_T: float = 0.5) -> torch.Tensor:
+    """L1 (Manhattan) distance between sharpened weak-view target and
+    strong-view prediction. Bounded in [0, 2] for probability vectors --
+    unlike cross-entropy, a badly-wrong prediction can't produce an
+    unbounded gradient spike."""
+    with torch.no_grad():
+        target = sharpen(probs_weak, T=sharpen_T)
+    return (target - probs_strong).abs().sum(dim=1).mean()
+
+
+def consistency_loss_l2(probs_weak: torch.Tensor, probs_strong: torch.Tensor,
+                         sharpen_T: float = 0.5) -> torch.Tensor:
+    """Squared L2 distance (multiclass Brier score) -- MixMatch's actual
+    choice (Berthelot et al., 2019), for the same bounded/robust reasoning."""
+    with torch.no_grad():
+        target = sharpen(probs_weak, T=sharpen_T)
+    return ((target - probs_strong) ** 2).sum(dim=1).mean()
+
 def consistency_loss(probs_weak: torch.Tensor, probs_strong: torch.Tensor,
                       sharpen_T: float = 0.5, eps: float = 1e-8) -> torch.Tensor:
     """Weak view (sharpened, no-grad) is the target; strong view is
@@ -251,7 +270,7 @@ if __name__ == "__main__":
     SUP_TEMPERATURE = 0.1     # labeled SupCon loss temperature
     KNN_TEMPERATURE = 0.1     # soft-label similarity temperature (support-set comparisons)
     SHARPEN_T = 0.5           # weak-view target sharpening temperature
-    K_PER_CLASS = 1           # support-set size per class, resampled every step
+    K_PER_CLASS = 5           # support-set size per class, resampled every step
     K_NEIGHBORS = 5           # k for FINAL evaluation k-NN (against full labeled set)
     LAMBDA_U = 1.0            # weight of the whole unsupervised block
     LAMBDA_ME = 1.0           # weight of mean-entropy-max within the unsupervised block
@@ -385,6 +404,8 @@ if __name__ == "__main__":
 
                     #loss = loss_sup + LAMBDA_U * (loss_consistency + LAMBDA_ME * loss_me)
                     loss = loss_sup + LAMBDA_U * loss_consistency
+                    #loss = loss_sup + LAMBDA_U * consistency_loss_l1
+                    #loss = loss_sup + LAMBDA_U * consistency_loss_l2
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
