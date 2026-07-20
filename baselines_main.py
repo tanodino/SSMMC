@@ -152,7 +152,8 @@ if __name__ == "__main__":
     #for epoch in range(start_epoch, max_num_epochs):
     step = 0
     ema_weights = None
-    for epoch in range(EPOCHS):
+    #for epoch in range(EPOCHS):
+    for epoch in range(1000):
         #for f_batch, s_batch, y_batch in dataloader_lab_train:
         start_time = time.time()
         total_loss = torch.zeros((), device=device) 
