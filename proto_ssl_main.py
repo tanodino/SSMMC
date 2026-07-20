@@ -183,6 +183,15 @@ def sharpen(p: torch.Tensor, T: float = 0.5) -> torch.Tensor:
     p_sharp = p ** (1.0 / T)
     return p_sharp / p_sharp.sum(dim=1, keepdim=True)
 
+def consistency_loss_embedding_cosine(emb_weak: torch.Tensor, emb_strong: torch.Tensor) -> torch.Tensor:
+    """emb_weak, emb_strong already L2-normalized (ProtoModel guarantees
+    this). Mathematically identical to L2 distance here -- this is
+    literally the BYOL/SimSiam objective."""
+    with torch.no_grad():
+        target = emb_weak.detach()
+    return (1.0 - (target * emb_strong).sum(dim=1)).mean()
+
+
 def consistency_loss_cosine(probs_weak: torch.Tensor, probs_strong: torch.Tensor,
                              sharpen_T: float = 0.5, eps: float = 1e-8) -> torch.Tensor:
     """1 - cosine_similarity between sharpened target and prediction.
@@ -436,8 +445,10 @@ if __name__ == "__main__":
 
                     #loss_consistency = consistency_loss(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
                     #loss_consistency = consistency_loss_l1(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
-                    loss_consistency = consistency_loss_l2(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
-                    
+                    #loss_consistency = consistency_loss_l2(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
+                    loss_consistency = consistency_loss_embedding_cosine(emb_weak, emb_strong)
+
+
                     loss_me = mean_entropy_max_loss(probs_strong)
 
                     #loss = loss_sup + LAMBDA_U * (loss_consistency + LAMBDA_ME * loss_me)
