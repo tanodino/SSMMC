@@ -423,13 +423,14 @@ if __name__ == "__main__":
                     probs_strong = soft_knn_probs(emb_strong, support_emb, y_sup,
                                                    n_classes, temperature=KNN_TEMPERATURE)
 
-                    loss_consistency = consistency_loss(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
+                    #loss_consistency = consistency_loss(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
+                    #loss_consistency = consistency_loss_l1(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
+                    loss_consistency = consistency_loss_l2(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
+                    
                     loss_me = mean_entropy_max_loss(probs_strong)
 
                     #loss = loss_sup + LAMBDA_U * (loss_consistency + LAMBDA_ME * loss_me)
-                    #loss = loss_sup + LAMBDA_U * loss_consistency
-                    #loss = loss_sup + LAMBDA_U * consistency_loss_l1
-                    loss = loss_sup + LAMBDA_U * consistency_loss_l2
+                    loss = loss_sup + LAMBDA_U * loss_consistency
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
