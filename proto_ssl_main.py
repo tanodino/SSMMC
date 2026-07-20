@@ -424,8 +424,8 @@ if __name__ == "__main__":
                                                    n_classes, temperature=KNN_TEMPERATURE)
 
                     #loss_consistency = consistency_loss(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
-                    loss_consistency = consistency_loss_l1(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
-                    #loss_consistency = consistency_loss_l2(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
+                    #loss_consistency = consistency_loss_l1(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
+                    loss_consistency = consistency_loss_l2(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
                     
                     loss_me = mean_entropy_max_loss(probs_strong)
 
