@@ -145,11 +145,35 @@ def sample_support_set(f_lab, s_lab, y_lab, n_classes, k_per_class=1):
     return f_lab[idx], s_lab[idx], y_lab[idx]
 
 
+def logit_standardize(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """Z-score standardization along the last dimension (Sun et al., CVPR
+    2024): subtract each row's own mean, divide by its own std. Strips out
+    absolute scale, keeping only the RELATIVE pattern across that row's
+    entries -- e.g. two views of the same sample can have very different
+    absolute similarity magnitudes to the reference set (strong
+    augmentation plausibly shrinks/inflates it uniformly) while still
+    agreeing on which class is most similar; standardizing removes the
+    magnitude difference and compares them on equal footing."""
+    mean = x.mean(dim=-1, keepdim=True)
+    std = x.std(dim=-1, keepdim=True, unbiased=False)
+    return (x - mean) / (std + eps)
+
+
 def soft_knn_probs(query_emb: torch.Tensor, ref_emb: torch.Tensor, ref_labels: torch.Tensor,
-                    n_classes: int, temperature: float = 0.1) -> torch.Tensor:
+                    n_classes: int, temperature: float = 0.1, standardize: bool = False) -> torch.Tensor:
     """[Bq, C] soft distribution: softmax over similarity to ALL reference
-    samples, aggregated by class via a one-hot matmul."""
-    sims = query_emb @ ref_emb.T / temperature
+    samples, aggregated by class via a one-hot matmul.
+
+    standardize=True applies Z-score standardization to each query's
+    similarity vector BEFORE the temperature-scaled softmax (see
+    logit_standardize docstring) -- makes the resulting soft label depend
+    only on the RELATIVE pattern of similarities to the reference set,
+    not their absolute scale. Default False for a clean A/B against the
+    original behavior."""
+    sims = query_emb @ ref_emb.T                              # [Bq, Nref]
+    if standardize:
+        sims = logit_standardize(sims)
+    sims = sims / temperature
     weights = F.softmax(sims, dim=1)
     one_hot_labels = F.one_hot(ref_labels, n_classes).float()
     return weights @ one_hot_labels
