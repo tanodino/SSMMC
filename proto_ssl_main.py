@@ -270,7 +270,7 @@ if __name__ == "__main__":
     SUP_TEMPERATURE = 0.1     # labeled SupCon loss temperature
     KNN_TEMPERATURE = 0.1     # soft-label similarity temperature (support-set comparisons)
     SHARPEN_T = 0.5           # weak-view target sharpening temperature
-    K_PER_CLASS = 5           # support-set size per class, resampled every step
+    K_PER_CLASS = 1           # support-set size per class, resampled every step
     K_NEIGHBORS = 5           # k for FINAL evaluation k-NN (against full labeled set)
     LAMBDA_U = 1.0            # weight of the whole unsupervised block
     LAMBDA_ME = 1.0           # weight of mean-entropy-max within the unsupervised block
