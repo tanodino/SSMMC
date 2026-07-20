@@ -146,7 +146,8 @@ if __name__ == "__main__":
 
     freematch = FreeMatchThresholding(num_classes=n_classes, momentum=0.999, device=device)
     lambda_u = 1.0
-    lambda_f = 0.01  # FreeMatch paper uses a small weight for this term
+    lambda_f = 1.0
+    #lambda_f = 0.01  # FreeMatch paper uses a small weight for this term
     #lambda_f = 0.  # FreeMatch paper uses a small weight for this term
 
     #for epoch in range(start_epoch, max_num_epochs):
