@@ -427,7 +427,8 @@ if __name__ == "__main__":
                     loss_sup = supervised_contrastive_loss(emb_lab, y_lab_b, temperature=SUP_TEMPERATURE)
 
                     # ---- unlabeled: support-set consistency + me-max ----
-                    f_weak, s_weak = weak_augment_pair(f_unl_b, s_unl_b)
+                    #f_weak, s_weak = weak_augment_pair(f_unl_b, s_unl_b)
+                    f_weak, s_weak = f_unl_b, s_unl_b
                     f_strong, s_strong = strong_augment_pair(f_unl_b, s_unl_b)
 
                     f_sup, s_sup, y_sup = sample_support_set(
