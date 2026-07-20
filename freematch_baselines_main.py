@@ -135,7 +135,7 @@ if __name__ == "__main__":
     
     if pretrained_path is not None:                                    # <-- new
         load_pretrained_encoders(model, pretrained_path, device)       # <-- new
-        freeze_pretrained_encoders(model)
+        #freeze_pretrained_encoders(model)
         
     model.compile()
     loss_fn_none = nn.CrossEntropyLoss(reduction="none")
