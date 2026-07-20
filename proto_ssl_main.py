@@ -383,7 +383,8 @@ if __name__ == "__main__":
                     loss_consistency = consistency_loss(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
                     loss_me = mean_entropy_max_loss(probs_strong)
 
-                    loss = loss_sup + LAMBDA_U * (loss_consistency + LAMBDA_ME * loss_me)
+                    #loss = loss_sup + LAMBDA_U * (loss_consistency + LAMBDA_ME * loss_me)
+                    loss = loss_sup + LAMBDA_U * loss_consistency
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
