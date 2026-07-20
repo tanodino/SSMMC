@@ -183,6 +183,17 @@ def sharpen(p: torch.Tensor, T: float = 0.5) -> torch.Tensor:
     p_sharp = p ** (1.0 / T)
     return p_sharp / p_sharp.sum(dim=1, keepdim=True)
 
+def consistency_loss_cosine(probs_weak: torch.Tensor, probs_strong: torch.Tensor,
+                             sharpen_T: float = 0.5, eps: float = 1e-8) -> torch.Tensor:
+    """1 - cosine_similarity between sharpened target and prediction.
+    NOTE: not equivalent to L2 here, since probs vectors aren't unit-norm --
+    this ignores confidence/peakiness differences, keeping only relative
+    class-preference pattern."""
+    with torch.no_grad():
+        target = sharpen(probs_weak, T=sharpen_T)
+    target_n = F.normalize(target, dim=1, eps=eps)
+    strong_n = F.normalize(probs_strong, dim=1, eps=eps)
+    return (1.0 - (target_n * strong_n).sum(dim=1)).mean()
 
 def consistency_loss_l1(probs_weak: torch.Tensor, probs_strong: torch.Tensor,
                          sharpen_T: float = 0.5) -> torch.Tensor:
