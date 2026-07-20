@@ -160,7 +160,7 @@ def logit_standardize(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
 
 
 def soft_knn_probs(query_emb: torch.Tensor, ref_emb: torch.Tensor, ref_labels: torch.Tensor,
-                    n_classes: int, temperature: float = 0.1, standardize: bool = False) -> torch.Tensor:
+                    n_classes: int, temperature: float = 0.1, standardize: bool = True) -> torch.Tensor:
     """[Bq, C] soft distribution: softmax over similarity to ALL reference
     samples, aggregated by class via a one-hot matmul.
 
