@@ -160,7 +160,7 @@ def logit_standardize(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
 
 
 def soft_knn_probs(query_emb: torch.Tensor, ref_emb: torch.Tensor, ref_labels: torch.Tensor,
-                    n_classes: int, temperature: float = 0.1, standardize: bool = True) -> torch.Tensor:
+                    n_classes: int, temperature: float = 0.1, standardize: bool = False) -> torch.Tensor:
     """[Bq, C] soft distribution: softmax over similarity to ALL reference
     samples, aggregated by class via a one-hot matmul.
 
@@ -427,9 +427,9 @@ if __name__ == "__main__":
                     loss_me = mean_entropy_max_loss(probs_strong)
 
                     #loss = loss_sup + LAMBDA_U * (loss_consistency + LAMBDA_ME * loss_me)
-                    loss = loss_sup + LAMBDA_U * loss_consistency
+                    #loss = loss_sup + LAMBDA_U * loss_consistency
                     #loss = loss_sup + LAMBDA_U * consistency_loss_l1
-                    #loss = loss_sup + LAMBDA_U * consistency_loss_l2
+                    loss = loss_sup + LAMBDA_U * consistency_loss_l2
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
