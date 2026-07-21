@@ -103,7 +103,7 @@ if __name__ == "__main__":
     # ---- tunables ----
     SHARPEN_T = 0.5      # weak-view target sharpening temperature
     LAMBDA_U = 1.0        # weight of consistency term
-    LAMBDA_ME = 1.0        # weight of me-max term
+    LAMBDA_ME = .3#1.0        # weight of me-max term
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
