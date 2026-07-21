@@ -236,7 +236,7 @@ if __name__ == "__main__":
                     loss_consistency = consistency_loss_l2(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
                     loss_me = mean_entropy_max_loss(probs_strong)
 
-                    loss = sup_loss #+ LAMBDA_U * loss_consistency #+ LAMBDA_ME * loss_me
+                    loss = sup_loss + LAMBDA_U * loss_consistency + LAMBDA_ME * loss_me
                 else:
                     loss = sup_loss
 
