@@ -101,7 +101,7 @@ if __name__ == "__main__":
     print(sys.argv)
 
     # ---- tunables ----
-    SHARPEN_T = 0.5      # weak-view target sharpening temperature
+    SHARPEN_T = 1.0#0.5      # weak-view target sharpening temperature
     LAMBDA_U = 1.0        # weight of consistency term
     LAMBDA_ME = .3#1.0        # weight of me-max term
 
