@@ -43,6 +43,15 @@ Components (see conversation for full derivation of each)
    time, unlike training where support sets are deliberately small and
    resampled for the stochasticity benefit.
 
+--------------------------------------------------------------------------
+DIAGNOSTICS -- per-component loss logging (every 5 epochs, matching F1/
+majority_frac cadence): loss_sup, loss_consistency, loss_me are each
+accumulated separately and printed alongside total, so the (previously
+opaque, me-max-dominated) `total` number can be decomposed -- see
+conversation for why this matters (me-max sits near its own floor most of
+the run and was masking movement in the other two terms).
+--------------------------------------------------------------------------
+
 Usage (same CLI pattern as your other scripts):
     python proto_ssl_main.py EUROSAT SAR MS 5 0 [pretrained_path] [freeze]
 """
@@ -316,8 +325,8 @@ if __name__ == "__main__":
     SHARPEN_T = 0.5           # weak-view target sharpening temperature
     K_PER_CLASS = 1           # support-set size per class, resampled every step
     K_NEIGHBORS = 5           # k for FINAL evaluation k-NN (against full labeled set)
-    LAMBDA_U = 1.0            # weight of the whole unsupervised block
-    LAMBDA_ME = 1.0           # weight of mean-entropy-max within the unsupervised block
+    LAMBDA_U = 1.0            # weight of the consistency term
+    LAMBDA_ME = 1.0           # weight of the mean-entropy-max term
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
@@ -406,7 +415,12 @@ if __name__ == "__main__":
         model.train()
         use_ssl = epoch >= WARM_UP_EPOCH_SSL
         total_loss = torch.zeros((), device=device)
+        # ---- per-component accumulators (diagnostic) ----
+        loss_sup_sum = torch.zeros((), device=device)
+        loss_consistency_sum = torch.zeros((), device=device)
+        loss_me_sum = torch.zeros((), device=device)
         n_batches = 0
+        n_ssl_batches = 0
         majority_frac_sum = 0.0
         majority_frac_batches = 0
 
@@ -449,7 +463,6 @@ if __name__ == "__main__":
                     #loss_consistency = consistency_loss_l2(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
                     loss_consistency = consistency_loss_embedding_cosine(emb_weak, emb_strong)
 
-
                     loss_me = mean_entropy_max_loss(probs_strong)
 
                     #loss = loss_sup + LAMBDA_U * (loss_consistency + LAMBDA_ME * loss_me)
@@ -459,7 +472,12 @@ if __name__ == "__main__":
                 scaler.step(optimizer)
                 scaler.update()
                 total_loss += loss.detach()
+                # ---- accumulate individual components (diagnostic) ----
+                loss_sup_sum += loss_sup.detach()
+                loss_consistency_sum += loss_consistency.detach()
+                loss_me_sum += loss_me.detach()
                 n_batches += 1
+                n_ssl_batches += 1
 
                 with torch.no_grad():
                     hard_preds = probs_strong.argmax(dim=1)
@@ -482,6 +500,8 @@ if __name__ == "__main__":
                 scaler.step(optimizer)
                 scaler.update()
                 total_loss += loss.detach()
+                # ---- during warmup, "loss" IS the supervised loss ----
+                loss_sup_sum += loss.detach()
                 n_batches += 1
 
         if epoch >= WARM_UP_EPOCH_EMA:
@@ -502,7 +522,14 @@ if __name__ == "__main__":
 
             f1_val = f1_score(test_labels, predictions, average="weighted")
             avg_majority_frac = majority_frac_sum / max(majority_frac_batches, 1)
+            # ---- per-component averages (diagnostic) ----
+            avg_loss_sup = loss_sup_sum.item() / max(n_batches, 1)
+            avg_loss_consistency = loss_consistency_sum.item() / max(n_ssl_batches, 1)
+            avg_loss_me = loss_me_sum.item() / max(n_ssl_batches, 1)
+
             print(f"epoch {epoch} total={total_loss.item() / max(n_batches, 1):.4f} "
+                  f"loss_sup={avg_loss_sup:.4f} loss_consistency={avg_loss_consistency:.4f} "
+                  f"loss_me={avg_loss_me:.4f} "
                   f"F1-score={(f1_val * 100):.2f} majority_frac={avg_majority_frac:.3f} "
                   f"ssl={'on' if use_ssl else 'off (warmup)'}")
             sys.stdout.flush()
