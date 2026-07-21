@@ -39,6 +39,7 @@ from torch.amp import autocast, GradScaler
 from sklearn.metrics import f1_score
 
 from model import SFFCConfig, ScoreFusion, FusionConcat
+
 from functions import (evaluation, weak_augment_pair, strong_augment_pair, MOMENTUM_EMA, cumulate_EMA,
                         WARM_UP_EPOCH_EMA, EPOCHS, WARM_UP_EPOCH_SSL, RATIO_LABELED_UNLABELED_BATCHES,
                         load_pretrained_encoders)
