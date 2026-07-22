@@ -34,7 +34,8 @@ Components (see conversation for full derivation of each)
       soft prediction for being non-uniform across classes -- directly
       targets class-collapse, independent of per-sample confidence.
 
-3. EVALUATION: k-NN (distance-weighted vote) against the FULL labeled set.
+3. EVALUATION: k-NN (distance-weighted vote), a post-hoc linear probe, and
+   a jointly-trained classification head -- all evaluated side by side.
 
 --------------------------------------------------------------------------
 h / z SPLIT (SimCLR-style; Chen et al., 2020) for the InfoNCE consistency
@@ -109,17 +110,22 @@ class ProtoModel(nn.Module):
             in_chans=config.in_chans_m2,
         )
         self.fusion = nn.Sequential(
-            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
+            nn.LazyLinear(512), nn.LayerNorm(512), nn.ReLU(),
             nn.Linear(512, proj_dim),
         )
 
         # SSL-only head: h -> z, called explicitly via project_for_ssl(h).
         # Never read by SupCon, support-set comparisons, or evaluation.
-        # Uses proj_dim (not a hardcoded literal) so it stays correct if
-        # proj_dim is ever changed from its default.
+        # LayerNorm (not BatchNorm) -- see conversation: BatchNorm's
+        # running statistics are updated from a heterogeneous mix of
+        # inputs every step (fixed labeled batch, freshly-augmented
+        # unlabeled views, support set), and eval() switches to those
+        # running stats -- so eval-time behavior can keep drifting even
+        # after train-time loss has converged. LayerNorm has no running
+        # statistics, so this discrepancy can't happen.
         self.ssl_head = nn.Sequential(
-            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
-            nn.Linear(512, proj_dim), nn.BatchNorm1d(proj_dim)
+            nn.LazyLinear(512), nn.LayerNorm(512), nn.ReLU(),
+            nn.Linear(512, proj_dim), nn.LayerNorm(proj_dim)
         )
 
         # Linear classification head, trained JOINTLY during the SSL loop
@@ -149,16 +155,16 @@ class ProtoModel(nn.Module):
         protective reasoning as the SimCLR h/z split used for
         project_for_ssl): the classification loss's gradient STOPS here
         and does NOT propagate into the shared encoder/projector, so it
-        cannot distort h -- SupCon + support-set consistency + InfoNCE
-        remain the sole forces shaping the representation.
+        cannot distort h. IMPORTANT: if SupCon (below) is disabled, this
+        flag needs to be False, or h receives NO label-aware gradient at
+        all -- see conversation.
 
         detach_input=False: gradient flows into h too. Not unprecedented
         (SupCon already uses the labeled set directly with real gradient
         into h), but plain CE on a linear head with only ~5 labels/class
         is far easier to memorize outright than SupCon's relational
         structure, so that memorization pressure would leak straight into
-        h if left un-detached. Use with caution; compare against
-        detach_input=True before trusting it."""
+        h if left un-detached."""
         if detach_input:
             h = h.detach()
         return self.classifier(h)                          # raw logits
@@ -447,8 +453,11 @@ if __name__ == "__main__":
                                # into the optimized loss below -- see comment at loss = ...)
     LAMBDA_CLS = 1.0          # weight of the jointly-trained classifier's CE loss
     DETACH_CLASSIFIER_INPUT = True  # True = "online linear probe" (gradient stops at h,
-                                     # cannot distort the shared representation). False =
-                                     # gradient flows into h too -- see classify()'s docstring.
+                                     # cannot distort the shared representation). SupCon is
+                                     # ACTIVE below, so h still gets label-aware gradient
+                                     # through that path even with this =True. If you ever
+                                     # remove SupCon, this MUST become False or h gets no
+                                     # label signal at all -- see conversation.
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
@@ -520,9 +529,6 @@ if __name__ == "__main__":
     )
 
     model = ProtoModel(config).to(device)
-    # NOTE: no addProjHead() call -- that method doesn't exist anymore.
-    # project_for_ssl() is always available as a method, called explicitly
-    # only where needed (see below).
 
     if pretrained_path is not None:
         load_pretrained_encoders(model, pretrained_path, device)
@@ -613,7 +619,7 @@ if __name__ == "__main__":
                     majority_frac_sum += majority_frac
                     majority_frac_batches += 1
         else:
-            # warmup: labeled SupCon only, no unlabeled pool touched
+            # warmup: labeled SupCon + classifier CE only, no unlabeled pool touched
             for f_lab_b, s_lab_b, y_lab_b in dataloader_lab_train:
                 optimizer.zero_grad(set_to_none=True)
                 f_lab_b = f_lab_b.to(device, non_blocking=True)
