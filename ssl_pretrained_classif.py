@@ -116,6 +116,7 @@ class PretrainModel(nn.Module):
         # F1-knn/F1-linprobe by several points in proto_ssl_main.py).
         # Making the head more expressive without adding regularization
         # would likely make that gap worse, not better.
+        '''
         self.classifier = nn.Sequential(
             nn.Linear(embed_dim * 2, classifier_hidden_dim),
             nn.LayerNorm(classifier_hidden_dim),
@@ -127,6 +128,9 @@ class PretrainModel(nn.Module):
             nn.Dropout(classifier_dropout),
             nn.Linear(classifier_hidden_dim // 2, num_classes),
         )
+        '''
+
+        self.classifier = nn.Linear(embed_dim * 2, num_classes)
 
     def forward(self, x1: torch.Tensor, x2: torch.Tensor):
         cls_token_m1 = self.modality_1_encoder(x1)   # [B, embed_dim]
