@@ -326,7 +326,7 @@ if __name__ == "__main__":
     K_PER_CLASS = 1           # support-set size per class, resampled every step
     K_NEIGHBORS = 5           # k for FINAL evaluation k-NN (against full labeled set)
     LAMBDA_U = 1.0            # weight of the consistency term
-    LAMBDA_ME = 1.0           # weight of the mean-entropy-max term
+    LAMBDA_ME = .3#1.0           # weight of the mean-entropy-max term
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
