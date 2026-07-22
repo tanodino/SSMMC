@@ -111,21 +111,29 @@ class ProtoModel(nn.Module):
         )
         self.fusion = nn.Sequential(
             nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
-            nn.Linear(512, proj_dim)
+            nn.Linear(512, proj_dim),
         )
 
         # SSL-only head: h -> z, called explicitly via project_for_ssl(h).
         # Never read by SupCon, support-set comparisons, or evaluation.
-        # LayerNorm (not BatchNorm) -- see conversation: BatchNorm's
-        # running statistics are updated from a heterogeneous mix of
-        # inputs every step (fixed labeled batch, freshly-augmented
-        # unlabeled views, support set), and eval() switches to those
-        # running stats -- so eval-time behavior can keep drifting even
-        # after train-time loss has converged. LayerNorm has no running
-        # statistics, so this discrepancy can't happen.
+        #
+        # NOTE (from conversation): BatchNorm vs LayerNorm was tested
+        # directly. LayerNorm removes the running-statistics train/eval
+        # discrepancy and DOES produce a genuine stable plateau (confirmed
+        # empirically), but that plateau sits BELOW where BatchNorm's
+        # still-declining trajectory was at the same epoch -- i.e.
+        # BatchNorm's noise appears to also confer real regularization
+        # benefit (higher peak AND likely higher eventual floor), same
+        # pattern observed earlier today comparing BatchNorm vs GroupNorm
+        # on a ResNet18 SF baseline. Reverted to BatchNorm here and paired
+        # with best-F1 checkpoint tracking (see main loop) instead --
+        # this captures BatchNorm's higher ceiling directly, sidestepping
+        # the instability rather than trading quality away for a lower,
+        # stable floor. Swap back to nn.LayerNorm if you want the
+        # stability-first tradeoff instead.
         self.ssl_head = nn.Sequential(
             nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
-            nn.Linear(512, proj_dim)
+            nn.Linear(512, proj_dim), nn.BatchNorm1d(proj_dim)
         )
 
         # Linear classification head, trained JOINTLY during the SSL loop
@@ -536,7 +544,14 @@ if __name__ == "__main__":
             freeze_pretrained_encoders(model)
             print("Pretrained encoders FROZEN")
 
-    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=5e-5)
+    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=5e-5, weight_decay=1e-4)
+    # NOTE: weight_decay was 0 (AdamW default) before -- nothing was pulling
+    # parameters back toward a smaller norm, so in a flat loss region (see
+    # conversation: loss_sup/loss_consistency converge by ~epoch 50-100 while
+    # F1 keeps drifting for hundreds more epochs) weights were free to wander
+    # indefinitely without any loss-value penalty for doing so. 1e-4 is a
+    # conservative starting point -- worth sweeping (1e-3, 1e-2) if this
+    # alone doesn't meaningfully change the drift.
     scaler = GradScaler('cuda')
     print("model created")
     sys.stdout.flush()
@@ -601,9 +616,12 @@ if __name__ == "__main__":
                     loss_me = mean_entropy_max_loss(probs_strong)
 
                     #loss = loss_sup + LAMBDA_U * (loss_consistency + LAMBDA_ME * loss_me)
-                    loss = loss_sup + LAMBDA_U * loss_consistency + LAMBDA_CLS * loss_cls  # me-max currently excluded, confirm intentional
+                    loss =  LAMBDA_U * loss_consistency + LAMBDA_CLS * loss_cls #+ loss_sup # me-max currently excluded, confirm intentional
 
                 scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    filter(lambda p: p.requires_grad, model.parameters()), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
                 total_loss += loss.detach()
@@ -634,6 +652,9 @@ if __name__ == "__main__":
                     loss = loss_sup_only + LAMBDA_CLS * loss_cls
 
                 scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    filter(lambda p: p.requires_grad, model.parameters()), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
                 total_loss += loss.detach()
