@@ -136,6 +136,56 @@ def supervised_contrastive_loss(embeddings: torch.Tensor, labels: torch.Tensor,
     return loss.mean()
 
 
+def consistency_loss_infonce(emb_weak: torch.Tensor, emb_strong: torch.Tensor,
+                              temperature: float = 0.2) -> torch.Tensor:
+    """InfoNCE / NT-Xent style consistency (same structure as pretrain.py's
+    NTXentLoss): strong-view embedding i is the ANCHOR, weak-view
+    embedding i (same sample, detached) is the POSITIVE, and every OTHER
+    sample's weak-view embedding in the batch is a NEGATIVE. Unlike
+    consistency_loss_embedding_cosine, this explicitly pushes DIFFERENT
+    unlabeled samples' embeddings apart, directly guarding against
+    collapse rather than relying on stop-gradient (+ the separate SupCon
+    term) alone.
+ 
+    Written with EXPLICIT positive/negative masks (matching
+    supervised_contrastive_loss's style in this file) rather than the
+    equivalent, more compact F.cross_entropy(sim, arange(B)) form, so the
+    positive/negative structure is visible at a glance rather than
+    implicit in index alignment.
+ 
+    CAVEAT (worth knowing, not necessarily disqualifying): unlike SupCon
+    on labeled data, there's no ground truth here to know whether two
+    unlabeled samples in the same batch are secretly the same class --
+    every non-matching-index pair is treated as a negative regardless.
+    This is the standard "false negative" issue in instance-discrimination
+    contrastive learning generally, not something specific to this script;
+    with ~128 samples spread over 10 classes, some same-class pairs WILL
+    get pushed apart slightly. In practice this is usually a minor effect
+    relative to the collapse risk it prevents, but worth monitoring
+    (majority_frac / F1 trajectory) rather than assuming it's negligible.
+ 
+    NOTE (from conversation): this loss showed a "never saturates"
+    over-optimization pattern on the TRISTAR run -- loss_consistency kept
+    falling for the full 500 epochs while F1 peaked early (~epoch 25) and
+    declined afterward. Track/save the best-F1 checkpoint rather than the
+    final epoch when using this loss (see main loop)."""
+    device = emb_strong.device
+    B = emb_strong.shape[0]
+ 
+    with torch.no_grad():
+        target = emb_weak.detach()               # [B, D], L2-normalized
+ 
+    sim = emb_strong @ target.T / temperature      # [B, B]: sim[i,j] = strong_i . weak_j
+ 
+    pos_mask = torch.eye(B, dtype=torch.bool, device=device)   # diagonal: matching-index pairs = positives
+    # (every off-diagonal entry in each row is implicitly a negative --
+    # there's exactly one positive per row, so no separate neg_mask needed)
+ 
+    log_prob = sim - torch.logsumexp(sim, dim=1, keepdim=True)  # log-softmax over the full row (1 positive + B-1 negatives)
+    loss_per_anchor = -log_prob[pos_mask]                          # pull out each row's positive log-prob
+    return loss_per_anchor.mean()
+
+
 # ==========================================================================
 # Unlabeled loss: support-set consistency + mean-entropy-maximization
 # ==========================================================================
@@ -461,7 +511,9 @@ if __name__ == "__main__":
                     #loss_consistency = consistency_loss(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
                     #loss_consistency = consistency_loss_l1(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
                     #loss_consistency = consistency_loss_l2(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
-                    loss_consistency = consistency_loss_embedding_cosine(emb_weak, emb_strong)
+                    #loss_consistency = consistency_loss_embedding_cosine(emb_weak, emb_strong)
+
+                    loss_consistency = loss_consistency = consistency_loss_infonce(emb_weak, emb_strong, temperature=INFO_NCE_TEMPERATURE)
 
                     loss_me = mean_entropy_max_loss(probs_strong)
 
