@@ -511,12 +511,12 @@ if __name__ == "__main__":
 
                     with torch.no_grad():
                         emb_weak = model(f_weak, s_weak)
-                        proj_weak = model.project_for_ssl(f_weak, s_weak)
+                        proj_weak = model.project_for_ssl(emb_weak)
                         probs_weak = soft_knn_probs(emb_weak, support_emb.detach(), y_sup,
                                                      n_classes, temperature=KNN_TEMPERATURE)
 
                     emb_strong = model(f_strong, s_strong)
-                    proj_strong = model.project_for_ssl(f_strong, s_strong)
+                    proj_strong = model.project_for_ssl(emb_strong)
                     probs_strong = soft_knn_probs(emb_strong, support_emb, y_sup,
                                                    n_classes, temperature=KNN_TEMPERATURE)
 
