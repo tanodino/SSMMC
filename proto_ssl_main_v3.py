@@ -1,54 +1,38 @@
 """
-Non-parametric semi-supervised classifier: SupCon fine-tuning + support-set
-consistency + mean-entropy-maximization (me-max).
-
-No trained classification head ANYWHERE in this pipeline -- neither for the
-labeled loss nor for pseudo-labeling the unlabeled pool. This is the direct
-motivation from today's diagnosis: every pseudo-labeling baseline that
-failed (FixMatch, SoftMatch, and MSC's collapse) did so via a classifier
-component (a randomly-initialized or freshly-converged head, or a modality-
-agreement mechanism) generating a confidently-wrong target that then got
-reinforced. This script never generates a hard label from a trained head at
-any point.
+Non-parametric semi-supervised classifier: support-set consistency +
+InfoNCE + a jointly-trained classification head.
 
 --------------------------------------------------------------------------
 Components (see conversation for full derivation of each)
 --------------------------------------------------------------------------
-1. LABELED LOSS -- Supervised Contrastive (Khosla et al., 2020), full-batch
-   (no augmentation): same-class = positive pair, different-class =
-   negative pair, in the fused embedding space.
+1. LABELED LOSS -- cross-entropy from the classifier head baked directly
+   into forward() (SupCon has been removed; see conversation for why
+   DETACH-style gradient protection is no longer optional once SupCon is
+   gone -- CE is now the ONLY path for labels to reach h, so it must flow
+   through un-detached, which is exactly what this version does).
 
-2. UNLABELED LOSS, two parts, both non-parametric (no trained head):
-   a. SUPPORT-SET CONSISTENCY (PAWS-style; Assran et al., ICCV 2021):
-      - draw a FRESH random support set each step: k_per_class labeled
-        samples per class (default 1) -- re-sampling every step is what
-        gives the model "relational" invariance (be close to WHICHEVER
-        same-class exemplar is drawn, not a fixed set of specific points)
-        and reintroduces the stochasticity that full-batch/no-augmentation
-        SupCon training otherwise lacks.
-      - weak view of an unlabeled sample -> soft label via similarity to
-        the support set (this is the TARGET, sharpened, no-grad)
-      - strong view -> soft label via similarity to the SAME support set
-        (this is the STUDENT prediction, trained to match the target)
-   b. MEAN-ENTROPY-MAXIMIZATION (me-max): penalizes the BATCH-AVERAGED
-      soft prediction for being non-uniform across classes -- directly
-      targets class-collapse, independent of per-sample confidence.
+2. UNLABELED LOSS, two parts:
+   a. SUPPORT-SET machinery (PAWS-style; Assran et al., ICCV 2021) is
+      still computed (soft_knn_probs, majority_frac diagnostic), but
+      mean-entropy-max (loss_me) is NOT currently included in the
+      optimized loss -- it's diagnostic-only right now.
+   b. InfoNCE / NT-Xent consistency between weak/strong augmented views,
+      computed in z-space (project_for_ssl(h) -> z), not h directly --
+      SimCLR-style h/z split, protects h from InfoNCE's
+      instance-discrimination-specific pressure.
 
 3. EVALUATION: k-NN (distance-weighted vote), a post-hoc linear probe, and
-   a jointly-trained classification head -- all evaluated side by side.
+   the jointly-trained classification head -- all evaluated side by side,
+   all reading h/classif from the SAME forward() call.
 
 --------------------------------------------------------------------------
-h / z SPLIT (SimCLR-style; Chen et al., 2020) for the InfoNCE consistency
-term specifically -- see ProtoModel docstring. forward() ALWAYS returns h
-(a single tensor); project_for_ssl(h) -> z is called explicitly ONLY at
-the InfoNCE call site, on an ALREADY-COMPUTED embedding (never on raw
-modality inputs) -- so every other call site (SupCon, support-set
-comparisons, evaluation) is unaffected and always gets a plain tensor.
+forward() returns a TUPLE: (classif, h). classif = raw classifier logits
+(gradient flows straight through, no detach -- see above). h = L2-normalized
+embedding, used everywhere else (support-set comparisons, k-NN, linear
+probe, InfoNCE via project_for_ssl). Every call site must unpack both
+values, even where only one is used (`_, h = model(...)` or
+`classif, _ = model(...)`).
 --------------------------------------------------------------------------
-
-DIAGNOSTICS -- per-component loss logging (every 5 epochs): loss_sup,
-loss_consistency, loss_me are each accumulated separately and printed
-alongside total.
 
 Usage (same CLI pattern as your other scripts):
     python proto_ssl_main.py EUROSAT SAR MS 5 0 [pretrained_path] [freeze]
@@ -84,20 +68,17 @@ class ProtoModel(nn.Module):
     """Two encoders, ONE shared projection head (self.fusion) applied to
     the concatenated per-modality CLS tokens.
 
-    ALSO includes a small, SEPARATE ssl_head (SimCLR-style h/z split;
-    Chen et al., 2020): `forward()` ALWAYS returns h (single tensor) --
-    used for SupCon, support-set comparisons, k-NN evaluation, everything
-    except InfoNCE. `project_for_ssl(h)` maps h -> z; it takes an
-    ALREADY-COMPUTED embedding (e.g. emb_weak/emb_strong from forward()),
-    NOT raw modality inputs -- called explicitly ONLY at the InfoNCE call
-    site.
+    forward() returns (classif, h) -- BOTH computed every call. classif
+    is the classifier's raw logits (self.classifier(emb), gradient flows
+    normally -- SupCon has been removed, so CE via classif is now the
+    ONLY path for labels to shape h; there is no detach option anymore
+    since classify() was merged directly into forward()). h is the
+    L2-normalized embedding used by everything else.
 
-    SimCLR's own ablation found the pre-projection representation (h)
-    outperforms the post-projection one (z) by >10% under linear
-    evaluation -- the contrastive objective pushes z toward
-    instance-discrimination-specific invariances that actively hurt
-    class-discriminative structure, so isolating that pressure into a
-    disposable extra head protects h (what k-NN actually uses) from it."""
+    ALSO includes a small, SEPARATE ssl_head (SimCLR-style h/z split;
+    Chen et al., 2020): project_for_ssl(h) -> z, called explicitly ONLY
+    at the InfoNCE call site, on an ALREADY-COMPUTED h (never on raw
+    modality inputs)."""
 
     def __init__(self, config: SFFCConfig, proj_dim: int = 128):
         super().__init__()
@@ -109,99 +90,73 @@ class ProtoModel(nn.Module):
             img_size=config.img_size_m2, patch_size=config.patch_size_m2,
             in_chans=config.in_chans_m2,
         )
-        
+
         self.fusion = nn.Sequential(
             nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
             nn.Linear(512, proj_dim), nn.BatchNorm1d(proj_dim)
         )
 
         # SSL-only head: h -> z, called explicitly via project_for_ssl(h).
-        # Never read by SupCon, support-set comparisons, or evaluation.
+        # Never read by support-set comparisons or evaluation.
         #
         # NOTE (from conversation): BatchNorm vs LayerNorm was tested
         # directly. LayerNorm removes the running-statistics train/eval
-        # discrepancy and DOES produce a genuine stable plateau (confirmed
-        # empirically), but that plateau sits BELOW where BatchNorm's
-        # still-declining trajectory was at the same epoch -- i.e.
-        # BatchNorm's noise appears to also confer real regularization
-        # benefit (higher peak AND likely higher eventual floor), same
-        # pattern observed earlier today comparing BatchNorm vs GroupNorm
-        # on a ResNet18 SF baseline. Reverted to BatchNorm here and paired
-        # with best-F1 checkpoint tracking (see main loop) instead --
-        # this captures BatchNorm's higher ceiling directly, sidestepping
-        # the instability rather than trading quality away for a lower,
-        # stable floor. Swap back to nn.LayerNorm if you want the
-        # stability-first tradeoff instead.
+        # discrepancy and produces a genuine stable plateau, but that
+        # plateau sits below where BatchNorm's still-declining trajectory
+        # was at the same epoch -- BatchNorm's noise appears to confer
+        # real regularization benefit here (same pattern seen earlier
+        # comparing BatchNorm vs GroupNorm on a ResNet18 SF baseline).
+        # Kept BatchNorm; weight decay + gradient clipping (see main loop)
+        # are being used instead to address the drift without giving up
+        # BatchNorm's higher ceiling. Swap to nn.LayerNorm here if you
+        # want the stability-first tradeoff instead.
         self.ssl_head = nn.Sequential(
             nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
             nn.Linear(512, proj_dim), nn.BatchNorm1d(proj_dim)
         )
 
-        # Linear classification head, trained JOINTLY during the SSL loop
-        # via a supervised CE loss on the labeled batch (see main loop) --
-        # NOT a post-hoc/refit-from-scratch probe. See classify()'s
-        # docstring for the detach_input design decision.
+        # Linear classification head. Computed directly inside forward()
+        # (not a separate method anymore) -- gradient flows into h
+        # un-detached, since SupCon has been removed and CE is now the
+        # only source of label-aware gradient for h.
         self.classifier = nn.Linear(proj_dim, config.num_classes)
 
-    def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor):
         cls_m1 = self.modality_1_encoder(x1)
         cls_m2 = self.modality_2_encoder(x2)
         concat = torch.cat([cls_m1, cls_m2], dim=1)
         emb = self.fusion(concat)
-        return self.classifier(emb), F.normalize(emb, dim=1)                # h -- always a single tensor
+        h = F.normalize(emb, dim=1)
+        classif = self.classifier(emb)
+        return classif, h                                  # ALWAYS a 2-tuple
 
     def project_for_ssl(self, h: torch.Tensor) -> torch.Tensor:
-        """h -> z. Takes an ALREADY-COMPUTED embedding, NOT raw modality
-        inputs -- call as model.project_for_ssl(emb_weak), never as
-        model.project_for_ssl(f_weak, s_weak)."""
+        """h -> z (L2-normalized embedding, NOT logits -- used only as the
+        InfoNCE consistency space). Takes an ALREADY-COMPUTED h, not raw
+        modality inputs."""
         z = self.ssl_head(h)
-        return F.normalize(z, dim=1)                      # raw logits
+        return F.normalize(z, dim=1)
 
 
 # ==========================================================================
-# Labeled loss: Supervised Contrastive (Khosla et al., 2020)
+# InfoNCE consistency (unlabeled)
 # ==========================================================================
-
-def supervised_contrastive_loss(embeddings: torch.Tensor, labels: torch.Tensor,
-                                 temperature: float = 0.1) -> torch.Tensor:
-    device = embeddings.device
-    N = embeddings.shape[0]
-
-    sim = embeddings @ embeddings.T / temperature
-    self_mask = torch.eye(N, dtype=torch.bool, device=device)
-
-    sim_max = sim.masked_fill(self_mask, float("-inf")).max(dim=1, keepdim=True).values
-    sim = sim - sim_max.detach()
-    exp_sim = torch.exp(sim) * (~self_mask)
-    log_prob = sim - torch.log(exp_sim.sum(dim=1, keepdim=True) + 1e-8)
-
-    labels = labels.view(-1, 1)
-    pos_mask = (labels == labels.T) & (~self_mask)
-    pos_counts = pos_mask.sum(dim=1).clamp(min=1)
-
-    loss = -(pos_mask * log_prob).sum(dim=1) / pos_counts
-    return loss.mean()
-
 
 def consistency_loss_infonce(emb_weak: torch.Tensor, emb_strong: torch.Tensor,
                               temperature: float = 0.2) -> torch.Tensor:
     """InfoNCE / NT-Xent style consistency. Called with z (project_for_ssl
-    output), NOT h directly -- see ProtoModel docstring.
+    output), NOT h directly.
 
     strong-view embedding i is the ANCHOR, weak-view embedding i (same
     sample, detached) is the POSITIVE, every OTHER sample's weak-view
     embedding in the batch is a NEGATIVE.
 
-    CAVEAT: no ground truth to know if two unlabeled samples secretly
-    share a class -- every non-matching-index pair is treated as a
-    negative regardless (standard "false negative" issue in
-    instance-discrimination contrastive learning).
-
     NOTE (from conversation): this loss showed a "never saturates"
-    over-optimization pattern on a prior run -- loss_consistency kept
-    falling for the full run while F1 peaked early and declined
-    afterward. Consider tracking/saving the best-F1 checkpoint rather
-    than only the final epoch when using this loss."""
+    over-optimization pattern -- loss_consistency keeps falling slowly
+    while F1 doesn't track it 1:1. Weight decay + gradient clipping are
+    being used as the primary countermeasure (see main loop) rather than
+    best-checkpoint selection on the test set, which would be unfair
+    given this setup has no separate validation set."""
     device = emb_strong.device
     B = emb_strong.shape[0]
 
@@ -217,13 +172,12 @@ def consistency_loss_infonce(emb_weak: torch.Tensor, emb_strong: torch.Tensor,
 
 
 # ==========================================================================
-# Unlabeled loss: support-set consistency + mean-entropy-maximization
+# Support-set machinery (currently diagnostic-only -- see loss_me below)
 # ==========================================================================
 
 def sample_support_set(f_lab, s_lab, y_lab, n_classes, k_per_class=1):
     """Fresh random support set: k_per_class labeled samples per class,
-    without replacement, resampled every call -- the source of the
-    "relational" stochasticity discussed in conversation."""
+    without replacement, resampled every call."""
     idx = []
     for c in range(n_classes):
         class_idx = (y_lab == c).nonzero(as_tuple=True)[0]
@@ -235,8 +189,6 @@ def sample_support_set(f_lab, s_lab, y_lab, n_classes, k_per_class=1):
 
 
 def logit_standardize(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
-    """Z-score standardization along the last dimension (Sun et al., CVPR
-    2024): subtract each row's own mean, divide by its own std."""
     mean = x.mean(dim=-1, keepdim=True)
     std = x.std(dim=-1, keepdim=True, unbiased=False)
     return (x - mean) / (std + eps)
@@ -244,9 +196,7 @@ def logit_standardize(x: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
 
 def soft_knn_probs(query_emb: torch.Tensor, ref_emb: torch.Tensor, ref_labels: torch.Tensor,
                     n_classes: int, temperature: float = 0.1, standardize: bool = False) -> torch.Tensor:
-    """[Bq, C] soft distribution: softmax over similarity to ALL reference
-    samples, aggregated by class via a one-hot matmul."""
-    sims = query_emb @ ref_emb.T                              # [Bq, Nref]
+    sims = query_emb @ ref_emb.T
     if standardize:
         sims = logit_standardize(sims)
     sims = sims / temperature
@@ -255,68 +205,26 @@ def soft_knn_probs(query_emb: torch.Tensor, ref_emb: torch.Tensor, ref_labels: t
     return weights @ one_hot_labels
 
 
-def sharpen(p: torch.Tensor, T: float = 0.5) -> torch.Tensor:
-    p_sharp = p ** (1.0 / T)
-    return p_sharp / p_sharp.sum(dim=1, keepdim=True)
-
-
-def consistency_loss_embedding_cosine(emb_weak: torch.Tensor, emb_strong: torch.Tensor) -> torch.Tensor:
-    """emb_weak, emb_strong already L2-normalized. Mathematically
-    identical to L2 distance here -- literally the BYOL/SimSiam objective."""
-    with torch.no_grad():
-        target = emb_weak.detach()
-    return (1.0 - (target * emb_strong).sum(dim=1)).mean()
-
-
-def consistency_loss_cosine(probs_weak: torch.Tensor, probs_strong: torch.Tensor,
-                             sharpen_T: float = 0.5, eps: float = 1e-8) -> torch.Tensor:
-    with torch.no_grad():
-        target = sharpen(probs_weak, T=sharpen_T)
-    target_n = F.normalize(target, dim=1, eps=eps)
-    strong_n = F.normalize(probs_strong, dim=1, eps=eps)
-    return (1.0 - (target_n * strong_n).sum(dim=1)).mean()
-
-
-def consistency_loss_l1(probs_weak: torch.Tensor, probs_strong: torch.Tensor,
-                         sharpen_T: float = 0.5) -> torch.Tensor:
-    with torch.no_grad():
-        target = sharpen(probs_weak, T=sharpen_T)
-    return (target - probs_strong).abs().sum(dim=1).mean()
-
-
-def consistency_loss_l2(probs_weak: torch.Tensor, probs_strong: torch.Tensor,
-                         sharpen_T: float = 0.5) -> torch.Tensor:
-    """Squared L2 distance (multiclass Brier score) -- MixMatch's actual
-    choice (Berthelot et al., 2019)."""
-    with torch.no_grad():
-        target = sharpen(probs_weak, T=sharpen_T)
-    return ((target - probs_strong) ** 2).sum(dim=1).mean()
-
-
-def consistency_loss(probs_weak: torch.Tensor, probs_strong: torch.Tensor,
-                      sharpen_T: float = 0.5, eps: float = 1e-8) -> torch.Tensor:
-    with torch.no_grad():
-        target = sharpen(probs_weak, T=sharpen_T)
-    return -(target * torch.log(probs_strong.clamp(min=eps))).sum(dim=1).mean()
-
-
 def mean_entropy_max_loss(probs: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     """Penalizes the BATCH-AVERAGED prediction for deviating from uniform.
-    Already sign-flipped: minimizing this MAXIMIZES entropy."""
+    Already sign-flipped: minimizing this MAXIMIZES entropy. NOTE:
+    computed every step for diagnostics (majority_frac) but NOT currently
+    included in the optimized loss -- see main loop."""
     mean_p = probs.mean(dim=0)
     entropy = -(mean_p * torch.log(mean_p.clamp(min=eps))).sum()
     return -entropy
 
 
 # ==========================================================================
-# Evaluation: k-NN (distance-weighted) against the FULL labeled set
+# Evaluation: k-NN, post-hoc linear probe, jointly-trained classifier
 # ==========================================================================
 
 @torch.no_grad()
 def compute_reference_embeddings(model: ProtoModel, f_lab: torch.Tensor, s_lab: torch.Tensor,
                                   device) -> torch.Tensor:
     model.eval()
-    return model(f_lab.to(device), s_lab.to(device))       # h, single tensor
+    _, h = model(f_lab.to(device), s_lab.to(device))       # unpack the (classif, h) tuple, keep h
+    return h
 
 
 @torch.no_grad()
@@ -340,7 +248,7 @@ def evaluate_with_knn(model: ProtoModel, ref_emb: torch.Tensor, ref_labels: torc
     for f_batch, s_batch, y_batch in dataloader:
         f_batch = f_batch.to(device, non_blocking=True)
         s_batch = s_batch.to(device, non_blocking=True)
-        emb = model(f_batch, s_batch)                       # h, single tensor
+        _, emb = model(f_batch, s_batch)                     # unpack (classif, h), keep h
         preds = knn_classify(emb, ref_emb, ref_labels, n_classes, k=k).cpu()
         all_preds.append(preds)
         all_labels.append(y_batch)
@@ -349,16 +257,12 @@ def evaluate_with_knn(model: ProtoModel, ref_emb: torch.Tensor, ref_labels: torc
 
 def evaluate_with_linear_probe(model: ProtoModel, f_lab: torch.Tensor, s_lab: torch.Tensor,
                                 y_lab: torch.Tensor, dataloader, device, C: float = 1.0):
-    """"Linear probe" evaluation, POST-HOC / refit-from-scratch each call
-    (standard SSL protocol -- SimCLR, MoCo, BYOL, SupCon all report this
-    as their primary representation-quality metric). Fits a fresh logistic
-    regression classifier on the labeled embeddings every time this is
-    called. See evaluate_with_classifier for the JOINTLY-trained
-    alternative (a linear head trained continuously during the SSL loop,
-    read off directly rather than refit each time)."""
+    """"Linear probe" evaluation, refit from scratch each call (standard
+    SSL protocol -- SimCLR, MoCo, BYOL all report this)."""
     model.eval()
     with torch.no_grad():
-        ref_emb = model(f_lab.to(device), s_lab.to(device)).cpu().numpy()
+        _, ref_emb_t = model(f_lab.to(device), s_lab.to(device))
+        ref_emb = ref_emb_t.cpu().numpy()
     ref_labels = y_lab.numpy()
 
     clf = LogisticRegression(max_iter=1000, C=C)
@@ -369,7 +273,8 @@ def evaluate_with_linear_probe(model: ProtoModel, f_lab: torch.Tensor, s_lab: to
         for f_batch, s_batch, y_batch in dataloader:
             f_batch = f_batch.to(device, non_blocking=True)
             s_batch = s_batch.to(device, non_blocking=True)
-            emb = model(f_batch, s_batch).cpu().numpy()
+            _, emb_t = model(f_batch, s_batch)
+            emb = emb_t.cpu().numpy()
             preds = clf.predict(emb)
             all_preds.append(preds)
             all_labels.append(y_batch.numpy())
@@ -378,19 +283,16 @@ def evaluate_with_linear_probe(model: ProtoModel, f_lab: torch.Tensor, s_lab: to
 
 @torch.no_grad()
 def evaluate_with_classifier(model: ProtoModel, dataloader, device):
-    """Reads predictions directly from model.classifier -- the linear head
-    trained JOINTLY, continuously, during the SSL loop (see main loop's
-    loss_cls). No fitting step here at all, unlike evaluate_with_linear_probe
-    -- this is just a forward pass through weights that have been training
-    the whole time."""
+    """Reads predictions directly from forward()'s classif output -- the
+    head trained jointly, continuously, during the SSL loop. classify()
+    is no longer a separate method; forward() already computes it."""
     model.eval()
     all_preds, all_labels = [], []
     for f_batch, s_batch, y_batch in dataloader:
         f_batch = f_batch.to(device, non_blocking=True)
         s_batch = s_batch.to(device, non_blocking=True)
-        h = model(f_batch, s_batch)
-        logits = model.classify(h)                          # detach_input irrelevant here (no_grad anyway)
-        preds = logits.argmax(dim=1).cpu()
+        classif, _ = model(f_batch, s_batch)                 # unpack (classif, h), keep classif
+        preds = classif.argmax(dim=1).cpu()
         all_preds.append(preds)
         all_labels.append(y_batch)
     return torch.cat(all_preds).numpy(), torch.cat(all_labels).numpy()
@@ -426,26 +328,13 @@ if __name__ == "__main__":
     print(sys.argv)
 
     # ---- tunables ----
-    SUP_TEMPERATURE = 0.1     # labeled SupCon loss temperature
     KNN_TEMPERATURE = 0.1     # soft-label similarity temperature (support-set comparisons)
-    INFO_NCE_TEMPERATURE = 1.0  # NOTE: SimCLR-typical range is 0.1-0.5; 1.0 gives a much
-                                 # flatter softmax -- weaker anti-collapse signal than lower
-                                 # values. Worth sweeping down (e.g. 0.2) if InfoNCE's
-                                 # negative pressure should bite harder, especially since
-                                 # me-max (below) is currently excluded from the loss.
-    SHARPEN_T = 0.5           # weak-view target sharpening temperature
-    K_PER_CLASS = 1           # support-set size per class, resampled every step
+    INFO_NCE_TEMPERATURE = 1.0  # NOTE: SimCLR-typical range is 0.1-0.5; 1.0 is much flatter --
+                                 # weaker anti-collapse signal. Worth sweeping down (e.g. 0.2).
+    K_PER_CLASS = 1           # support-set size per class, resampled every step (diagnostic only right now)
     K_NEIGHBORS = 5           # k for FINAL evaluation k-NN (against full labeled set)
-    LAMBDA_U = 1.0            # weight of the consistency term
-    LAMBDA_ME = 0.3           # weight of the mean-entropy-max term (currently NOT added
-                               # into the optimized loss below -- see comment at loss = ...)
-    LAMBDA_CLS = 1.0          # weight of the jointly-trained classifier's CE loss
-    DETACH_CLASSIFIER_INPUT = True  # True = "online linear probe" (gradient stops at h,
-                                     # cannot distort the shared representation). SupCon is
-                                     # ACTIVE below, so h still gets label-aware gradient
-                                     # through that path even with this =True. If you ever
-                                     # remove SupCon, this MUST become False or h gets no
-                                     # label signal at all -- see conversation.
+    LAMBDA_U = 1.0            # weight of the InfoNCE consistency term
+    LAMBDA_CLS = 1.0          # weight of the classifier's CE loss
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
@@ -525,13 +414,6 @@ if __name__ == "__main__":
             print("Pretrained encoders FROZEN")
 
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=5e-5, weight_decay=1e-4)
-    # NOTE: weight_decay was 0 (AdamW default) before -- nothing was pulling
-    # parameters back toward a smaller norm, so in a flat loss region (see
-    # conversation: loss_sup/loss_consistency converge by ~epoch 50-100 while
-    # F1 keeps drifting for hundreds more epochs) weights were free to wander
-    # indefinitely without any loss-value penalty for doing so. 1e-4 is a
-    # conservative starting point -- worth sweeping (1e-3, 1e-2) if this
-    # alone doesn't meaningfully change the drift.
     scaler = GradScaler('cuda')
     print("model created")
     sys.stdout.flush()
@@ -541,7 +423,7 @@ if __name__ == "__main__":
         model.train()
         use_ssl = epoch >= WARM_UP_EPOCH_SSL
         total_loss = torch.zeros((), device=device)
-        loss_sup_sum = torch.zeros((), device=device)
+        loss_cls_sum = torch.zeros((), device=device)
         loss_consistency_sum = torch.zeros((), device=device)
         loss_me_sum = torch.zeros((), device=device)
         n_batches = 0
@@ -561,42 +443,33 @@ if __name__ == "__main__":
                 s_unl_b = s_unl_b.to(device, non_blocking=True)
 
                 with autocast('cuda'):
-                    # ---- labeled: SupCon + classifier CE, full batch, no augmentation ----
-                    classif, emb_lab = model(f_lab_b, s_lab_b)                    # h, single tensor -- NOT unpacked as a tuple
-                    #loss_sup = supervised_contrastive_loss(emb_lab, y_lab_b, temperature=SUP_TEMPERATURE)
-
-                    #logits_lab = model.classify(emb_lab, detach_input=DETACH_CLASSIFIER_INPUT)
+                    # ---- labeled: classifier CE (SupCon removed), full batch, no augmentation ----
+                    classif, emb_lab = model(f_lab_b, s_lab_b)
                     loss_cls = F.cross_entropy(classif, y_lab_b)
 
-                    # ---- unlabeled: support-set consistency + InfoNCE ----
+                    # ---- unlabeled: support-set diagnostics + InfoNCE ----
                     f_weak, s_weak = weak_augment_pair(f_unl_b, s_unl_b)
                     f_strong, s_strong = strong_augment_pair(f_unl_b, s_unl_b)
 
                     f_sup, s_sup, y_sup = sample_support_set(
                         f_lab_b, s_lab_b, y_lab_b, n_classes, k_per_class=K_PER_CLASS)
-                    _, support_emb = model(f_sup, s_sup)          # h, single tensor -- grad-enabled
+                    _, support_emb = model(f_sup, s_sup)          # grad-enabled
 
                     with torch.no_grad():
-                        _, emb_weak = model(f_weak, s_weak)                    # h_weak
-                        proj_weak = model.project_for_ssl(emb_weak)           # z_weak -- from the EMBEDDING, not raw inputs
+                        _, emb_weak = model(f_weak, s_weak)
+                        proj_weak = model.project_for_ssl(emb_weak)
                         probs_weak = soft_knn_probs(emb_weak, support_emb.detach(), y_sup,
                                                      n_classes, temperature=KNN_TEMPERATURE)
 
-                    _, emb_strong = model(f_strong, s_strong)                  # h_strong
-                    proj_strong = model.project_for_ssl(emb_strong)           # z_strong -- from the EMBEDDING, not raw inputs
+                    _, emb_strong = model(f_strong, s_strong)
+                    proj_strong = model.project_for_ssl(emb_strong)
                     probs_strong = soft_knn_probs(emb_strong, support_emb, y_sup,
                                                    n_classes, temperature=KNN_TEMPERATURE)
 
-                    #loss_consistency = consistency_loss(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
-                    #loss_consistency = consistency_loss_l1(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
-                    #loss_consistency = consistency_loss_l2(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
-                    #loss_consistency = consistency_loss_embedding_cosine(emb_weak, emb_strong)
                     loss_consistency = consistency_loss_infonce(proj_weak, proj_strong, temperature=INFO_NCE_TEMPERATURE)
+                    loss_me = mean_entropy_max_loss(probs_strong)   # diagnostic only, not in loss
 
-                    loss_me = mean_entropy_max_loss(probs_strong)
-
-                    #loss = loss_sup + LAMBDA_U * (loss_consistency + LAMBDA_ME * loss_me)
-                    loss =  LAMBDA_U * loss_consistency + LAMBDA_CLS * loss_cls #+ loss_sup # me-max currently excluded, confirm intentional
+                    loss = LAMBDA_U * loss_consistency + LAMBDA_CLS * loss_cls
 
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -605,7 +478,7 @@ if __name__ == "__main__":
                 scaler.step(optimizer)
                 scaler.update()
                 total_loss += loss.detach()
-                loss_sup_sum += loss_sup.detach()
+                loss_cls_sum += loss_cls.detach()
                 loss_consistency_sum += loss_consistency.detach()
                 loss_me_sum += loss_me.detach()
                 n_batches += 1
@@ -617,7 +490,7 @@ if __name__ == "__main__":
                     majority_frac_sum += majority_frac
                     majority_frac_batches += 1
         else:
-            # warmup: labeled SupCon + classifier CE only, no unlabeled pool touched
+            # warmup: classifier CE only, no unlabeled pool touched
             for f_lab_b, s_lab_b, y_lab_b in dataloader_lab_train:
                 optimizer.zero_grad(set_to_none=True)
                 f_lab_b = f_lab_b.to(device, non_blocking=True)
@@ -625,11 +498,9 @@ if __name__ == "__main__":
                 y_lab_b = y_lab_b.to(device, non_blocking=True)
 
                 with autocast('cuda'):
-                    classif, emb_lab = model(f_lab_b, s_lab_b)             # h, single tensor
-                    #loss_sup_only = supervised_contrastive_loss(emb_lab, y_lab_b, temperature=SUP_TEMPERATURE)
-                    #logits_lab = model.classify(emb_lab, detach_input=DETACH_CLASSIFIER_INPUT)
+                    classif, emb_lab = model(f_lab_b, s_lab_b)
                     loss_cls = F.cross_entropy(classif, y_lab_b)
-                    loss = LAMBDA_CLS * loss_cls #+ loss_sup_only
+                    loss = LAMBDA_CLS * loss_cls
 
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
@@ -638,7 +509,7 @@ if __name__ == "__main__":
                 scaler.step(optimizer)
                 scaler.update()
                 total_loss += loss.detach()
-                loss_sup_sum += loss.detach()
+                loss_cls_sum += loss_cls.detach()
                 n_batches += 1
 
         if epoch >= WARM_UP_EPOCH_EMA:
@@ -667,12 +538,12 @@ if __name__ == "__main__":
             f1_val_lp = f1_score(lp_test_labels, lp_predictions, average="weighted")
             f1_val_cls = f1_score(cls_test_labels, cls_predictions, average="weighted")
             avg_majority_frac = majority_frac_sum / max(majority_frac_batches, 1)
-            avg_loss_sup = loss_sup_sum.item() / max(n_batches, 1)
+            avg_loss_cls = loss_cls_sum.item() / max(n_batches, 1)
             avg_loss_consistency = loss_consistency_sum.item() / max(n_ssl_batches, 1)
             avg_loss_me = loss_me_sum.item() / max(n_ssl_batches, 1)
 
             print(f"epoch {epoch} total={total_loss.item() / max(n_batches, 1):.4f} "
-                  f"loss_sup={avg_loss_sup:.4f} loss_consistency={avg_loss_consistency:.4f} "
+                  f"loss_cls={avg_loss_cls:.4f} loss_consistency={avg_loss_consistency:.4f} "
                   f"loss_me={avg_loss_me:.4f} "
                   f"F1-knn={(f1_val * 100):.2f} F1-linprobe={(f1_val_lp * 100):.2f} "
                   f"F1-classifier={(f1_val_cls * 100):.2f} "
