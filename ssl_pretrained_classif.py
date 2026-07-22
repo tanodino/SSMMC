@@ -76,7 +76,8 @@ class PretrainModel(nn.Module):
     cleanly, PLUS a new self.classifier not present in that checkpoint --
     load with strict=False and expect ONLY classifier.* in missing_keys."""
 
-    def __init__(self, config: SFFCConfig, num_classes: int, embed_dim: int = 384):
+    def __init__(self, config: SFFCConfig, num_classes: int, embed_dim: int = 384,
+                 classifier_hidden_dim: int = 256, classifier_dropout: float = 0.3):
         super().__init__()
         self.modality_1_encoder = ViTEncoder(
             img_size=config.img_size_m1, patch_size=config.patch_size_m1,
@@ -95,12 +96,37 @@ class PretrainModel(nn.Module):
             nn.Linear(512, 128), nn.BatchNorm1d(128),
         )
 
-        # NEW -- not present in the pretraining checkpoint. Operates
-        # directly on concatenated CLS tokens (raw encoder output), matching
-        # the very first, most stable design (frozen encoder + CE head on
-        # concatenated CLS tokens) rather than routing through the
-        # contrastive-specific projectors.
-        self.classifier = nn.Linear(embed_dim * 2, num_classes)
+        # NEW -- not present in the pretraining checkpoint. Small MLP on
+        # concatenated CLS tokens (2 hidden layers), rather than a single
+        # linear layer. LayerNorm (not BatchNorm): this classifier trains
+        # on the SAME fixed 50-sample labeled batch every step (no
+        # augmentation), so unlike proto_ssl_main's fusion/ssl_head (which
+        # saw a heterogeneous mix of labeled + varying augmented unlabeled
+        # data -- the actual driver of that script's BatchNorm drift),
+        # BatchNorm's running stats here would likely converge to something
+        # stable. Still defaulting to LayerNorm since 50 samples is a small
+        # population to trust for running statistics, and it removes the
+        # question entirely at no real cost -- swap to nn.BatchNorm1d if
+        # you want to test that instead.
+        #
+        # Dropout is deliberately present and non-trivial (0.3 default):
+        # a deeper head has MORE capacity to memorize a fixed 50-sample
+        # batch than the single-linear version did, and that version
+        # already showed real overfitting (F1-classifier trailing
+        # F1-knn/F1-linprobe by several points in proto_ssl_main.py).
+        # Making the head more expressive without adding regularization
+        # would likely make that gap worse, not better.
+        self.classifier = nn.Sequential(
+            nn.Linear(embed_dim * 2, classifier_hidden_dim),
+            nn.LayerNorm(classifier_hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(classifier_dropout),
+            nn.Linear(classifier_hidden_dim, classifier_hidden_dim // 2),
+            nn.LayerNorm(classifier_hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(classifier_dropout),
+            nn.Linear(classifier_hidden_dim // 2, num_classes),
+        )
 
     def forward(self, x1: torch.Tensor, x2: torch.Tensor):
         cls_token_m1 = self.modality_1_encoder(x1)   # [B, embed_dim]
@@ -205,6 +231,12 @@ if __name__ == "__main__":
                                # to whatever value your actual pretraining run used, if different
     LAMBDA_CLS = 1.0          # weight of the classifier CE loss
     K_NEIGHBORS = 5
+    BACKBONE_LR = 5e-6        # encoders + projectors -- ALL pretrained, move slowly so
+                               # continued SSL can refine them without risking the kind
+                               # of drift that hurt every unfrozen-pretrained-encoder
+                               # experiment earlier today (e.g. pretrained+unfrozen
+                               # FixMatch collapsing worse than from-scratch FixMatch)
+    CLASSIFIER_LR = 5e-5      # freshly initialized, needs to actually learn from scratch
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
@@ -280,8 +312,22 @@ if __name__ == "__main__":
         freeze_pretrained_backbone(model, freeze_projectors=False)
         print("Encoders FROZEN (projectors still trainable)")
 
-    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()),
-                                   lr=5e-5, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW([
+        {"params": [p for p in list(model.modality_1_encoder.parameters())
+                    + list(model.modality_2_encoder.parameters())
+                    + list(model.projector_m1.parameters())
+                    + list(model.projector_m2.parameters()) if p.requires_grad],
+         "lr": BACKBONE_LR, "weight_decay": 1e-4},
+        {"params": [p for p in model.classifier.parameters() if p.requires_grad],
+         "lr": CLASSIFIER_LR, "weight_decay": 1e-4},
+    ])
+    # NOTE: encoders AND projectors are all PRETRAINED (loaded from checkpoint),
+    # only self.classifier is freshly initialized. Grouping "encoder vs
+    # everything else" would be wrong -- projectors need the same gentle
+    # treatment as the encoders, not the classifier's faster rate. With
+    # freeze_encoder=True, the encoder params simply have requires_grad=False
+    # and drop out of the backbone group automatically; the projectors still
+    # train (at BACKBONE_LR) since they're never frozen by default.
     scaler = GradScaler('cuda')
     print("model created")
     sys.stdout.flush()
