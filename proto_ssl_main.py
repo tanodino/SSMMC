@@ -372,7 +372,7 @@ if __name__ == "__main__":
     # ---- tunables ----
     SUP_TEMPERATURE = 0.1     # labeled SupCon loss temperature
     KNN_TEMPERATURE = 0.1     # soft-label similarity temperature (support-set comparisons)
-    INFO_NCE_TEMPERATURE = 0.2  # temperature for consistency_loss_infonce (SimCLR-typical range: 0.1-0.5)
+    INFO_NCE_TEMPERATURE = 1.  # temperature for consistency_loss_infonce (SimCLR-typical range: 0.1-0.5)
     SHARPEN_T = 0.5           # weak-view target sharpening temperature
     K_PER_CLASS = 1           # support-set size per class, resampled every step
     K_NEIGHBORS = 5           # k for FINAL evaluation k-NN (against full labeled set)
