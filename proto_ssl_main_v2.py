@@ -110,8 +110,8 @@ class ProtoModel(nn.Module):
             in_chans=config.in_chans_m2,
         )
         self.fusion = nn.Sequential(
-            nn.LazyLinear(512), nn.LayerNorm(512), nn.ReLU(),
-            nn.Linear(512, proj_dim),
+            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
+            nn.Linear(512, proj_dim)
         )
 
         # SSL-only head: h -> z, called explicitly via project_for_ssl(h).
@@ -124,8 +124,8 @@ class ProtoModel(nn.Module):
         # after train-time loss has converged. LayerNorm has no running
         # statistics, so this discrepancy can't happen.
         self.ssl_head = nn.Sequential(
-            nn.LazyLinear(512), nn.LayerNorm(512), nn.ReLU(),
-            nn.Linear(512, proj_dim), nn.LayerNorm(proj_dim)
+            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
+            nn.Linear(512, proj_dim)
         )
 
         # Linear classification head, trained JOINTLY during the SSL loop
