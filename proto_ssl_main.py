@@ -98,16 +98,25 @@ class ProtoModel(nn.Module):
             img_size=config.img_size_m2, patch_size=config.patch_size_m2,
             in_chans=config.in_chans_m2,
         )
-        self.projector = nn.Sequential(
+        self.proj = nn.Sequential(
             nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
             nn.Linear(512, proj_dim),
         )
+
+        self.ssl_head = nn.Sequential(
+            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
+            nn.Linear(512, proj_dim), nn.BatchNorm1d(128)
+        )
+
+    def project_for_ssl(self, h: torch.Tensor) -> torch.Tensor:
+        z = self.ssl_head(h)
+        return F.normalize(z, dim=1)           
 
     def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
         cls_m1 = self.modality_1_encoder(x1)
         cls_m2 = self.modality_2_encoder(x2)
         concat = torch.cat([cls_m1, cls_m2], dim=1)
-        emb = self.projector(concat)
+        emb = self.proj(concat)
         return F.normalize(emb, dim=1)
 
 
@@ -502,10 +511,12 @@ if __name__ == "__main__":
 
                     with torch.no_grad():
                         emb_weak = model(f_weak, s_weak)
+                        proj_weak = model.project_for_ssl(f_weak, s_weak)
                         probs_weak = soft_knn_probs(emb_weak, support_emb.detach(), y_sup,
                                                      n_classes, temperature=KNN_TEMPERATURE)
 
                     emb_strong = model(f_strong, s_strong)
+                    proj_strong = model.project_for_ssl(f_strong, s_strong)
                     probs_strong = soft_knn_probs(emb_strong, support_emb, y_sup,
                                                    n_classes, temperature=KNN_TEMPERATURE)
 
@@ -514,7 +525,7 @@ if __name__ == "__main__":
                     #loss_consistency = consistency_loss_l2(probs_weak, probs_strong, sharpen_T=SHARPEN_T)
                     #loss_consistency = consistency_loss_embedding_cosine(emb_weak, emb_strong)
 
-                    loss_consistency = loss_consistency = consistency_loss_infonce(emb_weak, emb_strong, temperature=INFO_NCE_TEMPERATURE)
+                    loss_consistency = loss_consistency = consistency_loss_infonce(proj_weak, proj_strong, temperature=INFO_NCE_TEMPERATURE)
 
                     loss_me = mean_entropy_max_loss(probs_strong)
 
