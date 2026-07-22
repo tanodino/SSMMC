@@ -109,10 +109,17 @@ class ProtoModel(nn.Module):
             img_size=config.img_size_m2, patch_size=config.patch_size_m2,
             in_chans=config.in_chans_m2,
         )
+        
+        #self.fusion = nn.Sequential(
+        #    nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
+        #    nn.Linear(512, proj_dim),
+        #)
+
         self.fusion = nn.Sequential(
-            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
-            nn.Linear(512, proj_dim),
+            nn.LazyLinear(512), nn.Tanh(),
+            nn.Linear(512, proj_dim), nn.Tanh()
         )
+
 
         # SSL-only head: h -> z, called explicitly via project_for_ssl(h).
         # Never read by SupCon, support-set comparisons, or evaluation.
@@ -131,10 +138,16 @@ class ProtoModel(nn.Module):
         # the instability rather than trading quality away for a lower,
         # stable floor. Swap back to nn.LayerNorm if you want the
         # stability-first tradeoff instead.
+        #self.ssl_head = nn.Sequential(
+        #    nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
+        #    nn.Linear(512, proj_dim), nn.BatchNorm1d(proj_dim)
+        #)
+
         self.ssl_head = nn.Sequential(
-            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
-            nn.Linear(512, proj_dim), nn.BatchNorm1d(proj_dim)
+            nn.LazyLinear(512), nn.Tanh(),
+            nn.Linear(512, proj_dim), nn.Tanh()
         )
+
 
         # Linear classification head, trained JOINTLY during the SSL loop
         # via a supervised CE loss on the labeled batch (see main loop) --
