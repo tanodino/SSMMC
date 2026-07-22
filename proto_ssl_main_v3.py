@@ -112,7 +112,7 @@ class ProtoModel(nn.Module):
         
         self.fusion = nn.Sequential(
             nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
-            nn.Linear(512, proj_dim), nn.BatchNorm1d(512)
+            nn.Linear(512, proj_dim), nn.BatchNorm1d(proj_dim)
         )
 
         # SSL-only head: h -> z, called explicitly via project_for_ssl(h).
