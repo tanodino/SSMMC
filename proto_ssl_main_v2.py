@@ -649,7 +649,7 @@ if __name__ == "__main__":
                     loss_sup_only = supervised_contrastive_loss(emb_lab, y_lab_b, temperature=SUP_TEMPERATURE)
                     logits_lab = model.classify(emb_lab, detach_input=DETACH_CLASSIFIER_INPUT)
                     loss_cls = F.cross_entropy(logits_lab, y_lab_b)
-                    loss = loss_sup_only + LAMBDA_CLS * loss_cls
+                    loss = LAMBDA_CLS * loss_cls #+ loss_sup_only
 
                 scaler.scale(loss).backward()
                 scaler.unscale_(optimizer)
