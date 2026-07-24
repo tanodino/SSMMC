@@ -432,8 +432,8 @@ if __name__ == "__main__":
     _probe_encoder = ViTEncoder(img_size=config.img_size_m1, patch_size=config.patch_size_m1,
                                  in_chans=config.in_chans_m1)
     depth = len(_probe_encoder.transformer.layers)
-    #layer_indices = get_quarterly_layer_indices(depth)
-    layer_indices = list(range(depth))
+    layer_indices = get_quarterly_layer_indices(depth)
+    #layer_indices = list(range(depth))
     del _probe_encoder
     print("ViT depth=%d, using quarterly layer_indices (0-based)=%s" % (depth, layer_indices))
 

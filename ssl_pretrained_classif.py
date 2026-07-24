@@ -240,7 +240,8 @@ if __name__ == "__main__":
                                # of drift that hurt every unfrozen-pretrained-encoder
                                # experiment earlier today (e.g. pretrained+unfrozen
                                # FixMatch collapsing worse than from-scratch FixMatch)
-    CLASSIFIER_LR = 5e-5      # freshly initialized, needs to actually learn from scratch
+    #CLASSIFIER_LR = 5e-5      # freshly initialized, needs to actually learn from scratch
+    CLASSIFIER_LR = 1e-4      # freshly initialized, needs to actually learn from scratch
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
