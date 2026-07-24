@@ -357,7 +357,8 @@ if __name__ == "__main__":
     LAMBDA_CLS = 1.0
     K_NEIGHBORS = 5
     BACKBONE_LR = 5e-6        # encoders + projectors -- pretrained, move slowly
-    FRESH_LR = 5e-5           # classifier + alf_m1 + alf_m2 -- freshly initialized
+    #FRESH_LR = 5e-5           # classifier + alf_m1 + alf_m2 -- freshly initialized
+    FRESH_LR = 1e-4           # classifier + alf_m1 + alf_m2 -- freshly initialized
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
