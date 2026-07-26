@@ -23,9 +23,8 @@ cd $WORK/SSMMC/SSMMC
 # $2 - First Modality
 # $3 - Second Modality
 # $4 - per-class labels
-# $5 - Fusion Model (SF / FC)
 
 for i in $(seq 2 4)
 do
-    srun python kdmvc_training.py $1 $2 $3 $4 $i $5
+    srun python kdmvc_training.py $1 $2 $3 $4 $i
 done
