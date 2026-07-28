@@ -24,7 +24,8 @@ cd $WORK/SSMMC/SSMMC
 # $3 - Second Modality
 # $4 - per-class labels
 
-for i in $(seq 2 4)
+#for i in $(seq 2 4)
+for i in $(seq 0 1)
 do
     srun python kdmvc_training.py $1 $2 $3 $4 $i
 done

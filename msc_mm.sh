@@ -24,7 +24,8 @@ cd $WORK/SSMMC/SSMMC
 # $3 - Second Modality
 # $4 - per-class labels
 
-for i in $(seq 3 4)
+#for i in $(seq 3 4)
+for i in $(seq 0 2)
 do
     srun python msc_main.py $1 $2 $3 $4 $i
 done
