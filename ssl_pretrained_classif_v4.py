@@ -59,88 +59,6 @@ torch.backends.cudnn.benchmark = True
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
-@torch.no_grad()
-def knn_classify(query_emb: torch.Tensor, ref_emb: torch.Tensor, ref_labels: torch.Tensor,
-                  n_classes: int, k: int = 5) -> torch.Tensor:
-    k = min(k, ref_emb.shape[0])
-    sims = query_emb @ ref_emb.T
-    topk_sims, topk_idx = sims.topk(k, dim=1)
-    topk_labels = ref_labels[topk_idx]
-    class_scores = torch.zeros(query_emb.shape[0], n_classes, device=query_emb.device)
-    class_scores.scatter_add_(1, topk_labels, topk_sims.clamp(min=0))
-    return class_scores.argmax(dim=1)
-
-@torch.no_grad()
-def evaluate(model: PretrainModelV4, ref_emb: torch.Tensor, ref_labels: torch.Tensor,
-             dataloader, n_classes: int, device, k: int = 5):
-    model.eval()
-    cls_preds, knn_preds, all_labels = [], [], []
-    for f_batch, s_batch, y_batch in dataloader:
-        f_batch = f_batch.to(device, non_blocking=True)
-        s_batch = s_batch.to(device, non_blocking=True)
-        logits, fused_m1, fused_m2 = model.classify_alf(f_batch, s_batch)
-        cls_preds.append(logits.argmax(dim=1).cpu())
-        emb = F.normalize(torch.cat([fused_m1, fused_m2], dim=1), dim=1)
-        knn_preds.append(knn_classify(emb, ref_emb, ref_labels, n_classes, k=k).cpu())
-        all_labels.append(y_batch)
-    return (torch.cat(cls_preds).numpy(), torch.cat(knn_preds).numpy(), torch.cat(all_labels).numpy())
-
-class PretrainModelV4(nn.Module):
-    """Same encoders/projectors as pretrain.py (checkpoint loads with
-    strict=False; only the NEW fusion + classifier modules are missing).
-    forward() is UNCHANGED (used by loss_m1/loss_m2/loss_cross, exactly as
-    before). classify_alf() is NEW -- multi-layer fusion instead of
-    last-layer-only classification."""
-
-    def __init__(self, config: SFFCConfig, num_classes: int, layer_indices: list, embed_dim: int = 384):
-        super().__init__()
-        self.modality_1_encoder = ViTEncoder(
-            img_size=config.img_size_m1, patch_size=config.patch_size_m1,
-            in_chans=config.in_chans_m1,
-        )
-        self.modality_2_encoder = ViTEncoder(
-            img_size=config.img_size_m2, patch_size=config.patch_size_m2,
-            in_chans=config.in_chans_m2,
-        )
-        self.projector_m1 = nn.Sequential(
-            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
-            nn.Linear(512, 128), nn.BatchNorm1d(128),
-        )
-        self.projector_m2 = nn.Sequential(
-            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
-            nn.Linear(512, 128), nn.BatchNorm1d(128),
-        )
-
-        self.layer_indices = layer_indices   # shared across both modalities (same depth assumed)
-
-        # NEW -- not present in the pretraining checkpoint.
-        self.alf_m1 = LightweightLayerFusion(num_layers=len(layer_indices), embed_dim=embed_dim)
-        self.alf_m2 = LightweightLayerFusion(num_layers=len(layer_indices), embed_dim=embed_dim)
-        self.classifier = nn.Linear(embed_dim * 2, num_classes)
-
-    def forward(self, x1: torch.Tensor, x2: torch.Tensor):
-        """UNCHANGED -- used by the unlabeled contrastive losses exactly
-        as in resume_pretrain_supervised_main.py."""
-        cls_token_m1 = self.modality_1_encoder(x1)
-        cls_token_m2 = self.modality_2_encoder(x2)
-        proj_m1 = self.projector_m1(cls_token_m1)
-        proj_m2 = self.projector_m2(cls_token_m2)
-        return cls_token_m1, cls_token_m2, proj_m1, proj_m2
-
-    def classify_alf(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
-        """NEW classification path: multi-layer fusion instead of the
-        final-layer-only CLS token. Runs its OWN forward pass through each
-        encoder (via encoder_forward_all_layers) rather than reusing
-        forward()'s output, since forward() only returns the final layer."""
-        layers_m1 = encoder_forward_all_layers(self.modality_1_encoder, x1, self.layer_indices)  # [B, L, D]
-        layers_m2 = encoder_forward_all_layers(self.modality_2_encoder, x2, self.layer_indices)
-        fused_m1 = self.alf_m1(layers_m1)   # [B, D]
-        fused_m2 = self.alf_m2(layers_m2)
-        concat = torch.cat([fused_m1, fused_m2], dim=1)
-        return self.classifier(concat), fused_m1, fused_m2   # logits + embeddings (for optional k-NN eval)
-
-
-
 class LightweightLayerFusion(nn.Module):
     """A learned weight per layer combining per-layer CLS tokens.
 
@@ -239,6 +157,91 @@ def encoder_forward_all_layers(encoder: ViTEncoder, x: torch.Tensor, layer_indic
             collected[i] = encoder.norm(x)[:, 0, :]   # CLS token, normalized
 
     return torch.stack([collected[i] for i in layer_indices], dim=1)   # [B, L, D]
+
+
+
+class PretrainModelV4(nn.Module):
+    """Same encoders/projectors as pretrain.py (checkpoint loads with
+    strict=False; only the NEW fusion + classifier modules are missing).
+    forward() is UNCHANGED (used by loss_m1/loss_m2/loss_cross, exactly as
+    before). classify_alf() is NEW -- multi-layer fusion instead of
+    last-layer-only classification."""
+
+    def __init__(self, config: SFFCConfig, num_classes: int, layer_indices: list, embed_dim: int = 384):
+        super().__init__()
+        self.modality_1_encoder = ViTEncoder(
+            img_size=config.img_size_m1, patch_size=config.patch_size_m1,
+            in_chans=config.in_chans_m1,
+        )
+        self.modality_2_encoder = ViTEncoder(
+            img_size=config.img_size_m2, patch_size=config.patch_size_m2,
+            in_chans=config.in_chans_m2,
+        )
+        self.projector_m1 = nn.Sequential(
+            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
+            nn.Linear(512, 128), nn.BatchNorm1d(128),
+        )
+        self.projector_m2 = nn.Sequential(
+            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
+            nn.Linear(512, 128), nn.BatchNorm1d(128),
+        )
+
+        self.layer_indices = layer_indices   # shared across both modalities (same depth assumed)
+
+        # NEW -- not present in the pretraining checkpoint.
+        self.alf_m1 = LightweightLayerFusion(num_layers=len(layer_indices), embed_dim=embed_dim)
+        self.alf_m2 = LightweightLayerFusion(num_layers=len(layer_indices), embed_dim=embed_dim)
+        self.classifier = nn.Linear(embed_dim * 2, num_classes)
+
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor):
+        """UNCHANGED -- used by the unlabeled contrastive losses exactly
+        as in resume_pretrain_supervised_main.py."""
+        cls_token_m1 = self.modality_1_encoder(x1)
+        cls_token_m2 = self.modality_2_encoder(x2)
+        proj_m1 = self.projector_m1(cls_token_m1)
+        proj_m2 = self.projector_m2(cls_token_m2)
+        return cls_token_m1, cls_token_m2, proj_m1, proj_m2
+
+    def classify_alf(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+        """NEW classification path: multi-layer fusion instead of the
+        final-layer-only CLS token. Runs its OWN forward pass through each
+        encoder (via encoder_forward_all_layers) rather than reusing
+        forward()'s output, since forward() only returns the final layer."""
+        layers_m1 = encoder_forward_all_layers(self.modality_1_encoder, x1, self.layer_indices)  # [B, L, D]
+        layers_m2 = encoder_forward_all_layers(self.modality_2_encoder, x2, self.layer_indices)
+        fused_m1 = self.alf_m1(layers_m1)   # [B, D]
+        fused_m2 = self.alf_m2(layers_m2)
+        concat = torch.cat([fused_m1, fused_m2], dim=1)
+        return self.classifier(concat), fused_m1, fused_m2   # logits + embeddings (for optional k-NN eval)
+
+
+
+
+@torch.no_grad()
+def knn_classify(query_emb: torch.Tensor, ref_emb: torch.Tensor, ref_labels: torch.Tensor,
+                  n_classes: int, k: int = 5) -> torch.Tensor:
+    k = min(k, ref_emb.shape[0])
+    sims = query_emb @ ref_emb.T
+    topk_sims, topk_idx = sims.topk(k, dim=1)
+    topk_labels = ref_labels[topk_idx]
+    class_scores = torch.zeros(query_emb.shape[0], n_classes, device=query_emb.device)
+    class_scores.scatter_add_(1, topk_labels, topk_sims.clamp(min=0))
+    return class_scores.argmax(dim=1)
+
+@torch.no_grad()
+def evaluate(model: PretrainModelV4, ref_emb: torch.Tensor, ref_labels: torch.Tensor,
+             dataloader, n_classes: int, device, k: int = 5):
+    model.eval()
+    cls_preds, knn_preds, all_labels = [], [], []
+    for f_batch, s_batch, y_batch in dataloader:
+        f_batch = f_batch.to(device, non_blocking=True)
+        s_batch = s_batch.to(device, non_blocking=True)
+        logits, fused_m1, fused_m2 = model.classify_alf(f_batch, s_batch)
+        cls_preds.append(logits.argmax(dim=1).cpu())
+        emb = F.normalize(torch.cat([fused_m1, fused_m2], dim=1), dim=1)
+        knn_preds.append(knn_classify(emb, ref_emb, ref_labels, n_classes, k=k).cpu())
+        all_labels.append(y_batch)
+    return (torch.cat(cls_preds).numpy(), torch.cat(knn_preds).numpy(), torch.cat(all_labels).numpy())
 
 
 # ==========================================================================
