@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=baselines
-#SBATCH --output=baselines_%j.out
-#SBATCH --error=baselines_%j.err
+#SBATCH --job-name=ours
+#SBATCH --output=ours_%j.out
+#SBATCH --error=ours_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
