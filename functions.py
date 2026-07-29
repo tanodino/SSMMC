@@ -39,6 +39,50 @@ from kornia.augmentation import AugmentationSequential
 
 from kornia.geometry.transform import crop_and_resize
 
+
+######## SSL PRETRAINED CLASSIF V4 ########
+
+@torch.no_grad()
+def knn_classify(query_emb: torch.Tensor, ref_emb: torch.Tensor, ref_labels: torch.Tensor,
+                  n_classes: int, k: int = 5) -> torch.Tensor:
+    k = min(k, ref_emb.shape[0])
+    sims = query_emb @ ref_emb.T
+    topk_sims, topk_idx = sims.topk(k, dim=1)
+    topk_labels = ref_labels[topk_idx]
+    class_scores = torch.zeros(query_emb.shape[0], n_classes, device=query_emb.device)
+    class_scores.scatter_add_(1, topk_labels, topk_sims.clamp(min=0))
+    return class_scores.argmax(dim=1)
+
+@torch.no_grad()
+def evaluate(model: PretrainModelV4, ref_emb: torch.Tensor, ref_labels: torch.Tensor,
+             dataloader, n_classes: int, device, k: int = 5):
+    model.eval()
+    cls_preds, knn_preds, all_labels = [], [], []
+    for f_batch, s_batch, y_batch in dataloader:
+        f_batch = f_batch.to(device, non_blocking=True)
+        s_batch = s_batch.to(device, non_blocking=True)
+        logits, fused_m1, fused_m2 = model.classify_alf(f_batch, s_batch)
+        cls_preds.append(logits.argmax(dim=1).cpu())
+        emb = F.normalize(torch.cat([fused_m1, fused_m2], dim=1), dim=1)
+        knn_preds.append(knn_classify(emb, ref_emb, ref_labels, n_classes, k=k).cpu())
+        all_labels.append(y_batch)
+    return (torch.cat(cls_preds).numpy(), torch.cat(knn_preds).numpy(), torch.cat(all_labels).numpy())
+
+def get_quarterly_layer_indices(depth: int) -> list:
+    """0-based indices into encoder.transformer.layers for the paper's
+    "quarterly" variant: ~1/4, ~1/2, ~3/4, and the last block."""
+    idx = sorted(set([
+        max(0, depth // 4 - 1),
+        max(0, depth // 2 - 1),
+        max(0, (3 * depth) // 4 - 1),
+        depth - 1,
+    ]))
+    return idx
+
+
+#############
+
+
 def freeze_pretrained_encoders(model):
     """Freezes modality_1_encoder / modality_2_encoder, leaving every other
     parameter (classification heads, reliability nets, etc.) trainable."""
