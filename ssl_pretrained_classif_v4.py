@@ -52,12 +52,168 @@ from torch.utils.data import TensorDataset, DataLoader
 from torch.amp import autocast, GradScaler
 from sklearn.metrics import f1_score
 
-from model import SFFCConfig, ViTEncoder, encoder_forward_all_layers, LightweightLayerFusion, PretrainModelV4
+from model import SFFCConfig, ViTEncoder
 from functions import strong_augment_pair, NTXentLoss, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, RATIO_LABELED_UNLABELED_BATCHES, get_quarterly_layer_indices, evaluate, knn_classify
 
 torch.backends.cudnn.benchmark = True
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+
+
+class PretrainModelV4(nn.Module):
+    """Same encoders/projectors as pretrain.py (checkpoint loads with
+    strict=False; only the NEW fusion + classifier modules are missing).
+    forward() is UNCHANGED (used by loss_m1/loss_m2/loss_cross, exactly as
+    before). classify_alf() is NEW -- multi-layer fusion instead of
+    last-layer-only classification."""
+
+    def __init__(self, config: SFFCConfig, num_classes: int, layer_indices: list, embed_dim: int = 384):
+        super().__init__()
+        self.modality_1_encoder = ViTEncoder(
+            img_size=config.img_size_m1, patch_size=config.patch_size_m1,
+            in_chans=config.in_chans_m1,
+        )
+        self.modality_2_encoder = ViTEncoder(
+            img_size=config.img_size_m2, patch_size=config.patch_size_m2,
+            in_chans=config.in_chans_m2,
+        )
+        self.projector_m1 = nn.Sequential(
+            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
+            nn.Linear(512, 128), nn.BatchNorm1d(128),
+        )
+        self.projector_m2 = nn.Sequential(
+            nn.LazyLinear(512), nn.BatchNorm1d(512), nn.ReLU(),
+            nn.Linear(512, 128), nn.BatchNorm1d(128),
+        )
+
+        self.layer_indices = layer_indices   # shared across both modalities (same depth assumed)
+
+        # NEW -- not present in the pretraining checkpoint.
+        self.alf_m1 = LightweightLayerFusion(num_layers=len(layer_indices), embed_dim=embed_dim)
+        self.alf_m2 = LightweightLayerFusion(num_layers=len(layer_indices), embed_dim=embed_dim)
+        self.classifier = nn.Linear(embed_dim * 2, num_classes)
+
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor):
+        """UNCHANGED -- used by the unlabeled contrastive losses exactly
+        as in resume_pretrain_supervised_main.py."""
+        cls_token_m1 = self.modality_1_encoder(x1)
+        cls_token_m2 = self.modality_2_encoder(x2)
+        proj_m1 = self.projector_m1(cls_token_m1)
+        proj_m2 = self.projector_m2(cls_token_m2)
+        return cls_token_m1, cls_token_m2, proj_m1, proj_m2
+
+    def classify_alf(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+        """NEW classification path: multi-layer fusion instead of the
+        final-layer-only CLS token. Runs its OWN forward pass through each
+        encoder (via encoder_forward_all_layers) rather than reusing
+        forward()'s output, since forward() only returns the final layer."""
+        layers_m1 = encoder_forward_all_layers(self.modality_1_encoder, x1, self.layer_indices)  # [B, L, D]
+        layers_m2 = encoder_forward_all_layers(self.modality_2_encoder, x2, self.layer_indices)
+        fused_m1 = self.alf_m1(layers_m1)   # [B, D]
+        fused_m2 = self.alf_m2(layers_m2)
+        concat = torch.cat([fused_m1, fused_m2], dim=1)
+        return self.classifier(concat), fused_m1, fused_m2   # logits + embeddings (for optional k-NN eval)
+
+
+
+class LightweightLayerFusion(nn.Module):
+    """A learned weight per layer combining per-layer CLS tokens.
+
+    gating='softmax' : ORIGINAL design. Non-negative, weights sum to 1 --
+                        layers COMPETE for a shared budget (raising one
+                        layer's weight necessarily lowers another's).
+                        Implicitly bounds the fused output's scale to at
+                        most the largest individual layer's magnitude.
+    gating='sigmoid'  : RECOMMENDED (see conversation). Each layer's
+                        weight in (0,1), decided INDEPENDENTLY -- no
+                        competition, so genuinely complementary layers
+                        (per the paper's own finding) can both be used
+                        fully rather than trading off. Still non-negative
+                        (no "subtracting" a layer), keeping the
+                        combination easy to reason about.
+    gating='tanh'     : most expressive -- allows NEGATIVE weights (a
+                        layer can be subtracted, not just included/
+                        excluded). Bigger, more speculative departure;
+                        nothing tested so far validates that subtracting
+                        layer representations helps. Try only if sigmoid's
+                        ceiling turns out to be the actual bottleneck.
+
+    post_norm: LayerNorm on the fused output. Sigmoid/tanh lack softmax's
+    implicit scale bound (fused magnitude can grow up to ~L x a single
+    layer's scale if several gates open near 1/-1 simultaneously) -- cheap
+    insurance against the kind of scale-driven instability seen elsewhere
+    today (BatchNorm drift, InfoNCE). On by default for anything other
+    than softmax; off by default for softmax to match the already-tested
+    version exactly."""
+
+    #def __init__(self, num_layers: int, embed_dim: int, gating: str = "sigmoid", post_norm: bool = None):
+    def __init__(self, num_layers: int, embed_dim: int, gating: str = "sigmoid", post_norm: bool = None):
+        super().__init__()
+        assert gating in ("softmax", "sigmoid", "tanh")
+        self.gating = gating
+        self.layer_logits = nn.Parameter(torch.zeros(num_layers))
+
+        if post_norm is None:
+            post_norm = (gating != "softmax")
+        self.norm = nn.LayerNorm(embed_dim) if post_norm else None
+
+    def forward(self, layer_tokens: torch.Tensor) -> torch.Tensor:
+        # layer_tokens: [B, L, D]
+        if self.gating == "softmax":
+            weights = F.softmax(self.layer_logits, dim=0)
+        elif self.gating == "sigmoid":
+            weights = torch.sigmoid(self.layer_logits)
+        else:
+            weights = torch.tanh(self.layer_logits)
+
+        fused = (layer_tokens * weights.view(1, -1, 1)).sum(dim=1)   # [B, D]
+        if self.norm is not None:
+            fused = self.norm(fused)
+        return fused
+
+    def current_weights(self) -> torch.Tensor:
+        """Returns the actual weights currently in use (for logging) --
+        matches whichever gating function is active, unlike hardcoding
+        F.softmax in the caller."""
+        with torch.no_grad():
+            if self.gating == "softmax":
+                return F.softmax(self.layer_logits, dim=0)
+            elif self.gating == "sigmoid":
+                return torch.sigmoid(self.layer_logits)
+            else:
+                return torch.tanh(self.layer_logits)
+
+
+
+def encoder_forward_all_layers(encoder: ViTEncoder, x: torch.Tensor, layer_indices: list) -> torch.Tensor:
+    """Returns CLS tokens from the SPECIFIED layers (0-based indices into
+    encoder.transformer.layers), stacked as [B, len(layer_indices), embed_dim].
+
+    NOTE: manually iterates encoder.transformer.layers instead of calling
+    encoder.transformer(x) as a black box, since nn.TransformerEncoder's
+    standard forward only exposes the FINAL layer's output.
+
+    NOTE: encoder.norm (meant only for the true final layer in the
+    original forward()) is applied to EVERY collected layer here, to give
+    all collected representations a consistent scale before fusion --
+    simplest choice for a first test; a separate per-layer norm is a
+    reasonable alternative if this scale-sharing turns out to matter."""
+    B = x.shape[0]
+    x = encoder.patch_embed(x)
+    x = x + encoder.pos_embed[:, 1:, :]
+    cls_token = encoder.cls_token + encoder.pos_embed[:, :1, :]
+    cls_tokens = cls_token.expand(B, -1, -1)
+    x = torch.cat((cls_tokens, x), dim=1)
+    x = encoder.dropout(x)
+
+    layer_indices_set = set(layer_indices)
+    collected = {}
+    for i, layer in enumerate(encoder.transformer.layers):
+        x = layer(x)
+        if i in layer_indices_set:
+            collected[i] = encoder.norm(x)[:, 0, :]   # CLS token, normalized
+
+    return torch.stack([collected[i] for i in layer_indices], dim=1)   # [B, L, D]
 
 
 # ==========================================================================

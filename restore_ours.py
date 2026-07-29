@@ -7,7 +7,8 @@ import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from sklearn.metrics import f1_score
 
-from model import SFFCConfig, ViTEncoder, encoder_forward_all_layers, LightweightLayerFusion, PretrainModelV4
+from model import SFFCConfig, ViTEncoder
+from ssl_pretrained_classif_v4 import encoder_forward_all_layers, LightweightLayerFusion, PretrainModelV4
 
 from functions import get_quarterly_layer_indices
 
