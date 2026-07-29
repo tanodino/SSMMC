@@ -151,7 +151,24 @@ if __name__ == "__main__":
         freeze_pretrained_encoders(model)
     
     model.compile()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
+
+    
+
+    if pretrained_path is not None and not freeze_encoder:
+        special_params = []
+        normal_params = []
+        for name, param in model.named_parameters():
+            if "modality_1_encoder" in name or "modality_2_encoder" in name:  # ← tes modules spéciaux
+                special_params.append(param)
+            else:
+                normal_params.append(param)
+        optimizer = torch.optim.AdamW([
+        {"params": normal_params,  "lr": 1e-4},   # lr standard
+        {"params": special_params, "lr": 5e-6},   # lr spécifique
+        ], weight_decay=1e-4)
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+
     scaler = GradScaler()
     print("model created and compiled")
     sys.stdout.flush()
@@ -186,7 +203,6 @@ if __name__ == "__main__":
             total_loss += loss.detach()
             n_batches += 1
 
-        end = time.time()
         elapsed_time = time.time() - start_time
 
         if epoch >= WARM_UP_EPOCH_EMA:
