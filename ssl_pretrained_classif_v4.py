@@ -349,7 +349,7 @@ if __name__ == "__main__":
     perc = sys.argv[4]
     run_id = sys.argv[5]
     checkpoint_path = sys.argv[6]
-    freeze_encoder = "freeze" in sys.argv   # NOT the default recommendation here -- see conversation
+    freeze_encoder = "freeze" if "freeze" in sys.argv else None  # NOT the default recommendation here -- see conversation
     print(sys.argv)
 
     # ---- tunables ----
@@ -381,7 +381,7 @@ if __name__ == "__main__":
     print("f_unlab_data_train %d" % len(f_unlab_data_train))
     print("n_classes %d" % n_classes)
 
-    dir_name = dataset_path + "/RESUME_PRETRAIN_ALF"
+    dir_name = dataset_path + "/OURS"
     os.makedirs(dir_name, exist_ok=True)
     output_file = dir_name + "/%s_%s.pth" % (perc, run_id)
 
