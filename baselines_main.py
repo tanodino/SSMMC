@@ -43,6 +43,7 @@ if __name__ == "__main__":
     run_id = sys.argv[5]
     sf_or_fc = sys.argv[6] # SF = score fusion / FC = Feature Concat
     pretrained_path = sys.argv[7] if len(sys.argv) > 7 else None   # <-- new, optional
+    freeze_encoder = sys.argv[8] if len(sys.argv) > 8 else None   # <-- new, optional
     
     first_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, first_prefix) )
     second_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, second_prefix) )
@@ -65,8 +66,13 @@ if __name__ == "__main__":
 
     n_classes = len(np.unique(labels))
 
-
-    dir_name = dataset_path + "/%s"%sf_or_fc
+    if not pretrained_path:
+        dir_name = dataset_path + "/%s"%sf_or_fc
+    elif not freeze_encoder:
+        dir_name = dataset_path + "/PRETRAINED_%s"%sf_or_fc
+    else:
+        dir_name = dataset_path + "/PRETRAINED_FROZEN_ENCODER_%s"%sf_or_fc
+    
     os.makedirs(dir_name, exist_ok=True)
     output_file = dir_name+"/%s_%s.pth"%(perc, run_id)
 
@@ -141,6 +147,8 @@ if __name__ == "__main__":
 
     if pretrained_path is not None:                                    # <-- new
         load_pretrained_encoders(model, pretrained_path, device)       # <-- new
+
+    if freeze_encoder:
         freeze_pretrained_encoders(model)
     
     model.compile()
