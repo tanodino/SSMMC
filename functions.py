@@ -17,28 +17,7 @@ import kornia.filters as KF
 from kornia.augmentation import AugmentationSequential
 
 from kornia.geometry.transform import crop_and_resize
-
-
-from typing import Sequence
-import random
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-import torch
-from collections import OrderedDict
-import numpy as np
-import math
-import torch.nn.functional as F
-import torchvision.transforms as T
-import torchvision.transforms.functional as TF
-from scipy.ndimage import gaussian_filter
-from skimage.transform import resize
-from torch.utils.data import Dataset, DataLoader
-import kornia.augmentation as K
-import kornia.filters as KF
-from kornia.augmentation import AugmentationSequential
-
-from kornia.geometry.transform import crop_and_resize
-
+from model import PretrainModelV4
 
 ######## SSL PRETRAINED CLASSIF V4 ########
 
