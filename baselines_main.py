@@ -43,6 +43,7 @@ if __name__ == "__main__":
     sf_or_fc = sys.argv[6] # SF = score fusion / FC = Feature Concat
     pretrained_path = sys.argv[7] if len(sys.argv) > 7 else None   # <-- new, optional
     freeze_encoder = sys.argv[8] if len(sys.argv) > 8 else None   # <-- new, optional
+    print(sys.argv)
     
     first_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, first_prefix) )
     second_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, second_prefix) )
