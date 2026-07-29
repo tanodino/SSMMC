@@ -18,7 +18,6 @@ from torch.cuda.amp import GradScaler, autocast
 from torch.utils.checkpoint import checkpoint
 import os
 import warnings
-#from msc import MSCConfig, MSCModel, MSCLoss
 from model import SFFCConfig, ScoreFusion, FusionConcat
 import time
 from sklearn.metrics import f1_score
