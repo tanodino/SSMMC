@@ -16,7 +16,6 @@ import torch.autograd as autograd
 from dataclasses import dataclass
 import os
 import functools
-from functions import SFFCConfig
 
 import socket
 
