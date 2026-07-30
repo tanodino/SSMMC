@@ -83,7 +83,7 @@ if __name__ == "__main__":
     del _probe_encoder
     print("ViT depth=%d, layer_indices (0-based)=%s" % (depth, layer_indices))
 
-    dir_name = os.path.join(dataset_path, "RESUME_PRETRAIN_ALF")
+    dir_name = os.path.join(dataset_path, "OURS")
     f1_scores = []
     for run_id in run_ids:
         ckpt_path = os.path.join(dir_name, "%s_%s.pth" % (perc, run_id))
