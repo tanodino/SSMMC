@@ -54,6 +54,7 @@ from sklearn.metrics import f1_score
 
 from model import SFFCConfig, ViTEncoder
 from functions import strong_augment_pair, NTXentLoss, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, RATIO_LABELED_UNLABELED_BATCHES, get_quarterly_layer_indices
+from torch.utils.checkpoint import checkpoint
 
 torch.backends.cudnn.benchmark = True
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -126,38 +127,22 @@ class LightweightLayerFusion(nn.Module):
             else:
                 return torch.tanh(self.layer_logits)
 
-
-
-def encoder_forward_all_layers(encoder: ViTEncoder, x: torch.Tensor, layer_indices: list) -> torch.Tensor:
-    """Returns CLS tokens from the SPECIFIED layers (0-based indices into
-    encoder.transformer.layers), stacked as [B, len(layer_indices), embed_dim].
-
-    NOTE: manually iterates encoder.transformer.layers instead of calling
-    encoder.transformer(x) as a black box, since nn.TransformerEncoder's
-    standard forward only exposes the FINAL layer's output.
-
-    NOTE: encoder.norm (meant only for the true final layer in the
-    original forward()) is applied to EVERY collected layer here, to give
-    all collected representations a consistent scale before fusion --
-    simplest choice for a first test; a separate per-layer norm is a
-    reasonable alternative if this scale-sharing turns out to matter."""
+def encoder_forward_all_layers(encoder, x, layer_indices):
     B = x.shape[0]
     x = encoder.patch_embed(x)
     x = x + encoder.pos_embed[:, 1:, :]
     cls_token = encoder.cls_token + encoder.pos_embed[:, :1, :]
-    cls_tokens = cls_token.expand(B, -1, -1)
-    x = torch.cat((cls_tokens, x), dim=1)
+    x = torch.cat((cls_token.expand(B, -1, -1), x), dim=1)
     x = encoder.dropout(x)
 
     layer_indices_set = set(layer_indices)
     collected = {}
     for i, layer in enumerate(encoder.transformer.layers):
-        x = layer(x)
+        x = checkpoint(layer, x, use_reentrant=False)  # ✅ libère les activations
         if i in layer_indices_set:
-            collected[i] = encoder.norm(x)[:, 0, :]   # CLS token, normalized
+            collected[i] = encoder.norm(x)[:, 0, :]
 
-    return torch.stack([collected[i] for i in layer_indices], dim=1)   # [B, L, D]
-
+    return torch.stack([collected[i] for i in layer_indices], dim=1)
 
 
 class PretrainModelV4(nn.Module):
@@ -402,7 +387,7 @@ if __name__ == "__main__":
     x_tensor_s_lab = torch.tensor(s_lab_data_train, dtype=torch.float32)
     y_tensor = torch.tensor(labels, dtype=torch.int64)
     lab_dataset = TensorDataset(x_tensor_f_lab, x_tensor_s_lab, y_tensor)
-    dataloader_lab_train = DataLoader(lab_dataset, shuffle=True, batch_size=len(lab_dataset),
+    dataloader_lab_train = DataLoader(lab_dataset, shuffle=True, batch_size=batch_size,
         num_workers=0, pin_memory=True, drop_last=False)
 
     # ---------------- UNLABELED DATA ----------------
