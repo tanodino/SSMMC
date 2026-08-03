@@ -351,7 +351,7 @@ if __name__ == "__main__":
     print("f_unlab_data_train %d" % len(f_unlab_data_train))
     print("n_classes %d" % n_classes)
 
-    dir_name = dataset_path + "/RESUME_PRETRAIN_ALF_V5"   # separate from v4's output dir
+    dir_name = dataset_path + "/OURS_V5"   # separate from v4's output dir
     os.makedirs(dir_name, exist_ok=True)
     output_file = dir_name + "/%s_%s.pth" % (perc, run_id)
 
