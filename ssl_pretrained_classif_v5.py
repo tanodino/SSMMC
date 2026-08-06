@@ -123,7 +123,7 @@ class LightweightLayerFusion(nn.Module):
     this codebase."""
 
     def __init__(self, num_layers: int, embed_dim: int, gating: str = "sigmoid",
-                 post_norm: bool = None, layer_dropout: float = 0.3):
+                 post_norm: bool = None, layer_dropout: float = 0.5):
         super().__init__()
         assert gating in ("softmax", "sigmoid", "tanh")
         self.gating = gating
