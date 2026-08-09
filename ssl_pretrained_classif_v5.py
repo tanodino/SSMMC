@@ -55,6 +55,9 @@ torch.backends.cudnn.allow_tf32 = True
 # ==========================================================================
 # NOT in model.py -- self-contained here (see module docstring for why).
 
+from torch.utils.checkpoint import checkpoint
+
+
 def get_quarterly_layer_indices(depth: int) -> list:
     """0-based indices into encoder.transformer.layers: ~1/4, ~1/2, ~3/4,
     and the last block."""
@@ -67,13 +70,23 @@ def get_quarterly_layer_indices(depth: int) -> list:
     return idx
 
 
-def encoder_forward_all_layers(encoder: ViTEncoder, x: torch.Tensor, layer_indices: list) -> torch.Tensor:
+def encoder_forward_all_layers(encoder: ViTEncoder, x: torch.Tensor, layer_indices: list,
+                                use_checkpointing: bool = True) -> torch.Tensor:
     """Returns CLS tokens from the SPECIFIED layers, stacked as
     [B, len(layer_indices), embed_dim]. Manually iterates
     encoder.transformer.layers since nn.TransformerEncoder's standard
     forward only exposes the FINAL layer's output. encoder.norm is applied
     to every collected layer, giving all collected representations a
-    consistent scale before fusion."""
+    consistent scale before fusion.
+
+    use_checkpointing: wraps EACH layer's forward in
+    torch.utils.checkpoint (recompute-on-backward instead of storing
+    activations) -- this loop bypasses self.transformer(x)'s black-box
+    forward entirely (needed to reach intermediate layers), so it does
+    NOT benefit from wrapping .transformer as a whole; checkpointing has
+    to be applied at this per-layer level to have any effect here. Only
+    active when gradients are actually being tracked (torch.is_grad_enabled())
+    -- a no-op overhead-wise during eval."""
     B = x.shape[0]
     x = encoder.patch_embed(x)
     x = x + encoder.pos_embed[:, 1:, :]
@@ -85,7 +98,10 @@ def encoder_forward_all_layers(encoder: ViTEncoder, x: torch.Tensor, layer_indic
     layer_indices_set = set(layer_indices)
     collected = {}
     for i, layer in enumerate(encoder.transformer.layers):
-        x = layer(x)
+        if use_checkpointing and torch.is_grad_enabled():
+            x = checkpoint(layer, x, use_reentrant=False)
+        else:
+            x = layer(x)
         if i in layer_indices_set:
             collected[i] = encoder.norm(x)[:, 0, :]   # CLS token, normalized
 
@@ -123,7 +139,7 @@ class LightweightLayerFusion(nn.Module):
     this codebase."""
 
     def __init__(self, num_layers: int, embed_dim: int, gating: str = "sigmoid",
-                 post_norm: bool = None, layer_dropout: float = 0.5):
+                 post_norm: bool = None, layer_dropout: float = 0.2):
         super().__init__()
         assert gating in ("softmax", "sigmoid", "tanh")
         self.gating = gating
@@ -226,13 +242,15 @@ class PretrainModelV5(nn.Module):
         proj_m2 = self.projector_m2(cls_token_m2)
         return cls_token_m1, cls_token_m2, proj_m1, proj_m2
 
-    def classify_alf(self, x1: torch.Tensor, x2: torch.Tensor):
+    def classify_alf(self, x1: torch.Tensor, x2: torch.Tensor, use_checkpointing: bool = True):
         """Multi-layer fusion classification path. Runs its OWN forward
         pass through each encoder (via encoder_forward_all_layers) rather
         than reusing forward()'s output, since forward() only returns the
         final layer."""
-        layers_m1 = encoder_forward_all_layers(self.modality_1_encoder, x1, self.layer_indices)  # [B, L, D]
-        layers_m2 = encoder_forward_all_layers(self.modality_2_encoder, x2, self.layer_indices)
+        layers_m1 = encoder_forward_all_layers(self.modality_1_encoder, x1, self.layer_indices,
+                                                use_checkpointing=use_checkpointing)  # [B, L, D]
+        layers_m2 = encoder_forward_all_layers(self.modality_2_encoder, x2, self.layer_indices,
+                                                use_checkpointing=use_checkpointing)
         fused_m1 = self.alf_m1(layers_m1)   # [B, D]
         fused_m2 = self.alf_m2(layers_m2)
         concat = torch.cat([fused_m1, fused_m2], dim=1)
@@ -257,6 +275,36 @@ def load_full_pretrained_checkpoint(model: PretrainModelV5, path: str, device: s
         )
     print("Loaded full pretrained model (encoders + projectors) from %s" % path)
     print("  (classifier + alf_m1 + alf_m2 are new, randomly initialized -- expected)")
+
+
+def wrap_gradient_checkpointing(transformer_encoder):
+    """Wraps a nn.TransformerEncoder so each layer runs under
+    torch.utils.checkpoint during its forward() -- trades recomputation
+    for activation memory. Benefits the PLAIN forward() path (used by
+    loss_m1/loss_m2/loss_cross, which calls self.transformer(x) as a
+    whole) -- does NOT affect encoder_forward_all_layers, which bypasses
+    this black-box forward entirely and needs its own checkpointing
+    (see encoder_forward_all_layers's use_checkpointing argument)."""
+    original_layers = transformer_encoder.layers
+
+    class CheckpointedTransformerEncoder(nn.Module):
+        def __init__(self, layers, norm):
+            super().__init__()
+            self.layers = layers
+            self.norm = norm
+
+        def forward(self, src, mask=None, src_key_padding_mask=None):
+            x = src
+            for layer in self.layers:
+                if torch.is_grad_enabled():
+                    x = checkpoint(layer, x, mask, src_key_padding_mask, use_reentrant=False)
+                else:
+                    x = layer(x, mask, src_key_padding_mask)
+            if self.norm is not None:
+                x = self.norm(x)
+            return x
+
+    return CheckpointedTransformerEncoder(original_layers, transformer_encoder.norm)
 
 
 def freeze_pretrained_backbone(model: PretrainModelV5, freeze_projectors: bool = False):
@@ -329,6 +377,14 @@ if __name__ == "__main__":
     FRESH_LR = 5e-5           # classifier + alf_m1 + alf_m2 -- freshly initialized
     GATING = "sigmoid"        # 'softmax' | 'sigmoid' | 'tanh' -- see conversation
     LAYER_DROPOUT = 0.2       # NEW in v5 -- see LightweightLayerFusion docstring
+    USE_GRAD_CHECKPOINTING = True   # NEW -- trades compute (recomputation on backward)
+                                     # for activation memory. See conversation: six full
+                                     # ViT forward-and-backward passes per step, all with
+                                     # gradients retained, is a large memory footprint --
+                                     # especially if SUNRGBD's image resolution produces
+                                     # substantially more tokens than EuroSAT's 64x64
+                                     # patches did (attention memory scales quadratically
+                                     # with token count).
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
@@ -351,7 +407,7 @@ if __name__ == "__main__":
     print("f_unlab_data_train %d" % len(f_unlab_data_train))
     print("n_classes %d" % n_classes)
 
-    dir_name = dataset_path + "/OURS_V5"   # separate from v4's output dir
+    dir_name = dataset_path + "/RESUME_PRETRAIN_ALF_V5"   # separate from v4's output dir
     os.makedirs(dir_name, exist_ok=True)
     output_file = dir_name + "/%s_%s.pth" % (perc, run_id)
 
@@ -409,6 +465,11 @@ if __name__ == "__main__":
     model = PretrainModelV5(config, num_classes=n_classes, layer_indices=layer_indices,
                              layer_dropout=LAYER_DROPOUT, gating=GATING).to(device)
     load_full_pretrained_checkpoint(model, checkpoint_path, device)
+
+    if USE_GRAD_CHECKPOINTING:
+        model.modality_1_encoder.transformer = wrap_gradient_checkpointing(model.modality_1_encoder.transformer)
+        model.modality_2_encoder.transformer = wrap_gradient_checkpointing(model.modality_2_encoder.transformer)
+        print("Gradient checkpointing active on both encoders (forward() path)")
 
     if freeze_encoder:
         freeze_pretrained_backbone(model, freeze_projectors=False)
