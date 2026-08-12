@@ -33,6 +33,7 @@ Usage:
 import sys
 import os
 import copy
+import argparse
 import numpy as np
 import torch
 import torch.nn as nn
@@ -139,7 +140,7 @@ class LightweightLayerFusion(nn.Module):
     this codebase."""
 
     def __init__(self, num_layers: int, embed_dim: int, gating: str = "sigmoid",
-                 post_norm: bool = None, layer_dropout: float = 0.5):
+                 post_norm: bool = None, layer_dropout: float = 0.2):
         super().__init__()
         assert gating in ("softmax", "sigmoid", "tanh")
         self.gating = gating
@@ -358,33 +359,75 @@ def evaluate(model: PretrainModelV5, ref_emb: torch.Tensor, ref_labels: torch.Te
     return (torch.cat(cls_preds).numpy(), torch.cat(knn_preds).numpy(), torch.cat(all_labels).numpy())
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Resume full pretrained model, continue original SSL objective, "
+                    "classify via layer-dropout-regularized multi-layer fusion."
+    )
+    # ---- required positional arguments (same order as the old sys.argv[1:6]) ----
+    parser.add_argument("dataset_path", type=str, help="e.g. SUNRGBD")
+    parser.add_argument("first_prefix", type=str, help="e.g. RGB")
+    parser.add_argument("second_prefix", type=str, help="e.g. DEPTH")
+    parser.add_argument("perc", type=str, help="labeled percentage/count identifier, e.g. 5")
+    parser.add_argument("run_id", type=str, help="split id, e.g. 0")
+    parser.add_argument("checkpoint_path", type=str, help="path to the full pretrained checkpoint")
+
+    # ---- optional flags ----
+    parser.add_argument("--freeze", action="store_true",
+                        help="freeze the encoders (projectors still trainable)")
+    parser.add_argument("--all_layers_combination", action="store_true", default=False,
+                    help="freeze the encoders (projectors still trainable)")
+
+    parser.add_argument("--grad-checkpointing", action=argparse.BooleanOptionalAction, default=True,
+                        help="gradient checkpointing on both encoders (default: on); "
+                             "pass --no-grad-checkpointing to disable")
+
+    # ---- optional tunables (previously hardcoded constants) ----
+    parser.add_argument("--output_dir", type=str, default="OURS_V5",
+                        help="output directory, default OURS_V5")
+    parser.add_argument("--shared-unshared", type=int, default=50,
+                        help="invariant/specific split %% for loss_cross (default: 50)")
+    parser.add_argument("--lambda-cls", type=float, default=1.0,
+                        help="weight of the classifier CE loss (default: 1.0)")
+    parser.add_argument("--k-neighbors", type=int, default=5,
+                        help="k for the k-NN evaluation metric (default: 5)")
+    parser.add_argument("--backbone-lr", type=float, default=5e-6,
+                        help="LR for encoders + projectors (default: 5e-6)")
+    parser.add_argument("--fresh-lr", type=float, default=5e-5,
+                        help="LR for classifier + alf_m1 + alf_m2 (default: 5e-5)")
+    parser.add_argument("--gating", type=str, default="sigmoid",
+                        choices=["softmax", "sigmoid", "tanh"],
+                        help="layer-fusion gating function (default: sigmoid)")
+    parser.add_argument("--layer-dropout", type=float, default=0.5,
+                        help="per-layer dropout probability in the fusion module (default: 0.2)")
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
     batch_size = 16
-    dataset_path = sys.argv[1]
-    first_prefix = sys.argv[2]
-    second_prefix = sys.argv[3]
-    perc = sys.argv[4]
-    run_id = sys.argv[5]
-    checkpoint_path = sys.argv[6]
-    freeze_encoder = "freeze" in sys.argv
-    print(sys.argv)
+    args = parse_args()
+    print(vars(args))
 
-    # ---- tunables ----
-    SHARED_UNSHARED = 50
-    LAMBDA_CLS = 1.0
-    K_NEIGHBORS = 5
-    BACKBONE_LR = 5e-6        # encoders + projectors -- pretrained, move slowly
-    FRESH_LR = 5e-5           # classifier + alf_m1 + alf_m2 -- freshly initialized
-    GATING = "sigmoid"        # 'softmax' | 'sigmoid' | 'tanh' -- see conversation
-    LAYER_DROPOUT = 0.2       # NEW in v5 -- see LightweightLayerFusion docstring
-    USE_GRAD_CHECKPOINTING = True   # NEW -- trades compute (recomputation on backward)
-                                     # for activation memory. See conversation: six full
-                                     # ViT forward-and-backward passes per step, all with
-                                     # gradients retained, is a large memory footprint --
-                                     # especially if SUNRGBD's image resolution produces
-                                     # substantially more tokens than EuroSAT's 64x64
-                                     # patches did (attention memory scales quadratically
-                                     # with token count).
+    dataset_path = args.dataset_path
+    first_prefix = args.first_prefix
+    second_prefix = args.second_prefix
+    perc = args.perc
+    run_id = args.run_id
+    checkpoint_path = args.checkpoint_path
+    freeze_encoder = args.freeze
+    output_dir = args.output_dir
+    all_layer_combination = args.all_layers_combination
+
+    # ---- tunables (now overridable from the command line) ----
+    SHARED_UNSHARED = args.shared_unshared
+    LAMBDA_CLS = args.lambda_cls
+    K_NEIGHBORS = args.k_neighbors
+    BACKBONE_LR = args.backbone_lr
+    FRESH_LR = args.fresh_lr
+    GATING = args.gating
+    LAYER_DROPOUT = args.layer_dropout
+    USE_GRAD_CHECKPOINTING = args.grad_checkpointing
 
     first_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, first_prefix))
     second_data = np.load("%s/%s_data_normalized.npy" % (dataset_path, second_prefix))
@@ -407,7 +450,7 @@ if __name__ == "__main__":
     print("f_unlab_data_train %d" % len(f_unlab_data_train))
     print("n_classes %d" % n_classes)
 
-    dir_name = dataset_path + "/RESUME_PRETRAIN_ALF_V5"   # separate from v4's output dir
+    dir_name = dataset_path + "/"+ output_dir   # separate from v4's output dir
     os.makedirs(dir_name, exist_ok=True)
     output_file = dir_name + "/%s_%s.pth" % (perc, run_id)
 
@@ -458,7 +501,11 @@ if __name__ == "__main__":
     _probe_encoder = ViTEncoder(img_size=config.img_size_m1, patch_size=config.patch_size_m1,
                                  in_chans=config.in_chans_m1)
     depth = len(_probe_encoder.transformer.layers)
-    layer_indices = get_quarterly_layer_indices(depth)
+    if all_layer_combination:
+        layer_indices = depth
+    else:
+        layer_indices = get_quarterly_layer_indices(depth)
+    
     del _probe_encoder
     print("ViT depth=%d, using quarterly layer_indices (0-based)=%s" % (depth, layer_indices))
 
