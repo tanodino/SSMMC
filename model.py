@@ -20,10 +20,6 @@ import functools
 import socket
 
 
-
-
-
-
 class ResNet18Encoder(nn.Module):
     def __init__(self, img_size: int = None, in_chans: int = 3, gn_groups: int = 32):
         super().__init__()
@@ -213,7 +209,7 @@ class SoftMatchWeighting:
         self.num_classes = num_classes
         self.device = device
         self.prob_max_mu = torch.tensor(1.0 / num_classes, device=device)
-        self.prob_max_var = torch.tensor(1.0, device=device)
+        self.prob_max_var = ((1.0 - 1.0/num_classes) / 4) ** 2 #torch.tensor(1.0, device=device)
 
 
     @torch.no_grad()

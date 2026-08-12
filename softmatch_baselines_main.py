@@ -155,7 +155,13 @@ if __name__ == "__main__":
         start_time = time.time()
         total_loss = torch.zeros((), device=device) 
         n_batches = 0
-        use_ssl = epoch >= WARM_UP_EPOCH_SSL      
+        use_ssl = epoch >= WARM_UP_EPOCH_SSL
+        weight_sum = 0.0
+        majority_frac_sum = 0.0
+        ssl_batches = 0
+        mu_sum = 0.0
+        var_sum = 0.0
+
         for (f_batch, s_batch, y_batch), (f_batch_unl, s_batch_unl) in zip(
             itertools.cycle(dataloader_lab_train), dataloader_unl_train):           
 
@@ -192,6 +198,15 @@ if __name__ == "__main__":
                     softmatch.update(max_probs)
                     sample_weights = softmatch.weight(max_probs)
 
+                    weight_sum += sample_weights.mean().item()
+                    majority_frac_sum += (
+                        pseudo_labels.bincount(minlength=n_classes).max() / pseudo_labels.numel()
+                    ).item()
+                    mu_sum += softmatch.prob_max_mu.item()
+                    var_sum += softmatch.prob_max_var.item()
+                    ssl_batches += 1
+
+
                     pred_strong = model(f_strong, s_strong)
                     if sf_or_fc == "SF":
                         log_probs_strong = torch.log(pred_strong.clamp(min=1e-8))
@@ -227,10 +242,20 @@ if __name__ == "__main__":
 
             f1_val = f1_score(test_labels, predictions, average="weighted")
             total_loss = total_loss.item()  
+
+            avg_weight = weight_sum / max(ssl_batches, 1)
+            avg_majority_frac = majority_frac_sum / max(ssl_batches, 1)
+            avg_mu = mu_sum / max(ssl_batches, 1)
+            avg_var = var_sum / max(ssl_batches, 1)
+
             print(f"epoch {epoch} "
                 f"total={np.mean(total_loss / max(n_batches, 1)):.4f} "
                 f"elapsed_time={elapsed_time:.2f} "
-                f"F1-score={(f1_val * 100):.2f}")
+                f"F1-score={(f1_val * 100):.2f} "
+                f"mean_weight={avg_weight:.3f} "
+                f"majority_frac={avg_majority_frac:.3f} "
+                f"prob_max_mu={avg_mu:.3f} "
+                f"prob_max_var={avg_var:.3f}")
             sys.stdout.flush()
     
     model.load_state_dict(ema_weights)
