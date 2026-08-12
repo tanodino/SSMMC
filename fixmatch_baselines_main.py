@@ -147,7 +147,7 @@ if __name__ == "__main__":
     model.compile()
     
     loss_fn_none = nn.CrossEntropyLoss(reduction="none")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
     scaler = GradScaler()
     print("model created and compiled")
     sys.stdout.flush()

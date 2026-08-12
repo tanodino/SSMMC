@@ -139,11 +139,11 @@ if __name__ == "__main__":
         
     model.compile()
     loss_fn_none = nn.CrossEntropyLoss(reduction="none")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
     scaler = GradScaler()
     print("model created and compiled")
     sys.stdout.flush()
-
+    
     freematch = FreeMatchThresholding(num_classes=n_classes, momentum=0.999, device=device)
     lambda_u = 1.0
     #lambda_f = 1.0
