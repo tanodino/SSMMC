@@ -502,7 +502,7 @@ if __name__ == "__main__":
                                  in_chans=config.in_chans_m1)
     depth = len(_probe_encoder.transformer.layers)
     if all_layer_combination:
-        layer_indices = depth
+        layer_indices = np.arange(depth)
     else:
         layer_indices = get_quarterly_layer_indices(depth)
     
