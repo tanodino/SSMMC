@@ -25,12 +25,38 @@ torch.backends.cudnn.allow_tf32 = True
 # rather than silently loading something wrong.
 # ==========================================================================
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Resume full pretrained model, continue original SSL objective, "
+                    "classify via layer-dropout-regularized multi-layer fusion."
+    )
+    # ---- required positional arguments (same order as the old sys.argv[1:6]) ----
+    parser.add_argument("dataset_path", type=str, help="e.g. SUNRGBD")
+    parser.add_argument("first_prefix", type=str, help="e.g. RGB")
+    parser.add_argument("second_prefix", type=str, help="e.g. DEPTH")
+    parser.add_argument("perc", type=str, help="labeled percentage/count identifier, e.g. 5")
+
+    # ---- optional flags ----
+    parser.add_argument("--all_layers_combination", action="store_true", default=False,
+                    help="freeze the encoders (projectors still trainable)")
+
+    # ---- optional tunables (previously hardcoded constants) ----
+    parser.add_argument("--output_dir", type=str, default="OURS_V5",
+                        help="output directory, default OURS_V5")
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
     batch_size = 16
-    dataset_path = sys.argv[1]
-    first_prefix = sys.argv[2]
-    second_prefix = sys.argv[3]
-    perc = sys.argv[4]
+    args = parse_args()
+
+    dataset_path = args.dataset_path
+    first_prefix = args.first_prefix
+    second_prefix = args.second_prefix
+    perc = args.perc
+    output_dir = args.output_dir
+    all_layer_combination = args.all_layers_combination
     n_splits = 5
     run_ids = range(n_splits)           # ASSUMPTION: run_id in training was "0","1","2","3","4"
                                          # -> adjust `run_ids` below if your run_ids are named differently
@@ -79,12 +105,16 @@ if __name__ == "__main__":
     _probe_encoder = ViTEncoder(img_size=config.img_size_m1, patch_size=config.patch_size_m1,
                                  in_chans=config.in_chans_m1)
     depth = len(_probe_encoder.transformer.layers)
-    layer_indices = get_quarterly_layer_indices(depth)
+    if all_layer_combination:
+        layer_indices = np.arange(depth) 
+    else:
+        layer_indices = get_quarterly_layer_indices(depth)
     del _probe_encoder
+
     print("ViT depth=%d, layer_indices (0-based)=%s" % (depth, layer_indices))
 
     #dir_name = os.path.join(dataset_path, "OURS")
-    dir_name = os.path.join(dataset_path, "OURS_V5")
+    dir_name = os.path.join(dataset_path, output_dir)
     f1_scores = []
     for run_id in run_ids:
         ckpt_path = os.path.join(dir_name, "%s_%s.pth" % (perc, run_id))
