@@ -536,6 +536,7 @@ if __name__ == "__main__":
         {"params": backbone_params, "lr": BACKBONE_LR, "weight_decay": 1e-4},
         {"params": fresh_params, "lr": FRESH_LR, "weight_decay": 1e-4},
     ])
+    model = torch.compile(model)
     scaler = GradScaler('cuda')
     print("model created")
     sys.stdout.flush()
@@ -635,5 +636,5 @@ if __name__ == "__main__":
 
     if ema_weights is not None:
         model.load_state_dict(ema_weights)
-    torch.save(model.state_dict(), output_file)
+    torch.save(model._orig_mod.state_dict(), output_file)
     print("Saved to %s" % output_file)
