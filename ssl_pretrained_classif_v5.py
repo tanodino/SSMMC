@@ -41,6 +41,7 @@ import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from torch.amp import autocast, GradScaler
 from sklearn.metrics import f1_score
+import time
 
 from model import SFFCConfig, ViTEncoder
 from functions import (strong_augment_pair, NTXentLoss, MOMENTUM_EMA, cumulate_EMA,
@@ -544,6 +545,7 @@ if __name__ == "__main__":
     ema_weights = None
     for epoch in range(EPOCHS):
         model.train()
+        start_time = time.time()
         total_loss = torch.zeros((), device=device)
         loss_m1_sum = torch.zeros((), device=device)
         loss_m2_sum = torch.zeros((), device=device)
@@ -602,11 +604,12 @@ if __name__ == "__main__":
             loss_cross_sum += loss_cross.detach()
             loss_cls_sum += loss_cls.detach()
             n_batches += 1
+        elapsed_time = time.time() - start_time
 
         if epoch >= WARM_UP_EPOCH_EMA:
             ema_weights = cumulate_EMA(model, ema_weights, MOMENTUM_EMA)
 
-        if epoch % 5 == 0:
+        if epoch % 10 == 0:
             if epoch >= WARM_UP_EPOCH_EMA:
                 current_state_dict = copy.deepcopy(model.state_dict())
                 model.load_state_dict(ema_weights)
@@ -631,7 +634,7 @@ if __name__ == "__main__":
                   f"loss_cross={loss_cross_sum.item() / max(n_batches, 1):.4f} "
                   f"loss_cls={loss_cls_sum.item() / max(n_batches, 1):.4f} "
                   f"F1-classifier={(f1_cls * 100):.2f} F1-knn={(f1_knn * 100):.2f} "
-                  f"layer_w_m1={layer_weights_m1} layer_w_m2={layer_weights_m2}")
+                  f"layer_w_m1={layer_weights_m1} layer_w_m2={layer_weights_m2} one_epoch_time={elapsed_time:.2f}")
             sys.stdout.flush()
 
     if ema_weights is not None:
