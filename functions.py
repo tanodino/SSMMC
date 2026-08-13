@@ -18,6 +18,7 @@ from kornia.augmentation import AugmentationSequential
 
 from kornia.geometry.transform import crop_and_resize
 
+
 ######## SSL PRETRAINED CLASSIF V4 ########
 
 
@@ -649,7 +650,7 @@ VALID_BATCH_SIZE = 128
 TEST_BATCH_SIZE = 128
 LEARNING_RATE = 0.0001
 MOMENTUM_EMA = .95
-EPOCHS = 500
+EPOCHS = 300
 TH_FIXMATCH = .95
 WARM_UP_EPOCH_EMA = 30
 warmup_epochs = 5
