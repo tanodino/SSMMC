@@ -475,7 +475,7 @@ if __name__ == "__main__":
     x_tensor_s_lab = torch.tensor(s_lab_data_train, dtype=torch.float32)
     y_tensor = torch.tensor(labels, dtype=torch.int64)
     lab_dataset = TensorDataset(x_tensor_f_lab, x_tensor_s_lab, y_tensor)
-    dataloader_lab_train = DataLoader(lab_dataset, shuffle=True, batch_size=len(lab_dataset),
+    dataloader_lab_train = DataLoader(lab_dataset, shuffle=True, batch_size=batch_size,
         num_workers=0, pin_memory=True, drop_last=False)
 
     # ---------------- UNLABELED DATA ----------------
@@ -583,7 +583,7 @@ if __name__ == "__main__":
                 loss_cross = NTXentLoss(emb_inv, labels_cls_loss, temperature=1.0)
 
                 # ---- labeled: multi-layer fusion classification (with layer_dropout), no pseudo-labeling ----
-                logits_lab, _, _ = model.classify_alf(f_lab_b, s_lab_b)
+                logits_lab, _, _ = model.classify_alf(f_lab_b, s_lab_b, use_checkpointing=USE_GRAD_CHECKPOINTING)
                 loss_cls = F.cross_entropy(logits_lab, y_lab_b)
 
                 loss = 0.5 * (loss_m1 + loss_m2) + loss_cross + LAMBDA_CLS * loss_cls
