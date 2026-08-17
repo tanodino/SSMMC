@@ -319,10 +319,6 @@ if __name__ == "__main__":
             scaler.update()
 
             total_loss     += loss.detach()
-            loss_m1_sum    += loss_m1.detach()
-            loss_m2_sum    += loss_m2.detach()
-            loss_cross_sum += loss_cross.detach()
-            loss_cls_sum   += loss_cls.detach()
             n_batches += 1
 
         if epoch >= WARM_UP_EPOCH_EMA:
@@ -345,10 +341,6 @@ if __name__ == "__main__":
             f1_knn = f1_score(test_labels, knn_preds, average="weighted")
 
             print(f"epoch {epoch} total={total_loss.item() / max(n_batches, 1):.4f} "
-                  f"loss_m1={loss_m1_sum.item() / max(n_batches, 1):.4f} "
-                  f"loss_m2={loss_m2_sum.item() / max(n_batches, 1):.4f} "
-                  f"loss_cross={loss_cross_sum.item() / max(n_batches, 1):.4f} "
-                  f"loss_cls={loss_cls_sum.item() / max(n_batches, 1):.4f} "
                   f"F1-classifier={(f1_cls * 100):.2f} F1-knn={(f1_knn * 100):.2f}")
             sys.stdout.flush()
 
