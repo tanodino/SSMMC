@@ -274,8 +274,8 @@ if __name__ == "__main__":
 
         for f_batch_unl, s_batch_unl in dataloader_unl_train:
             optimizer.zero_grad(set_to_none=True)
-            f_batch_unl = f_batch_unl.to(device, non_blocking=True)
-            s_batch_unl = s_batch_unl.to(device, non_blocking=True)
+            #f_batch_unl = f_batch_unl.to(device, non_blocking=True)
+            #s_batch_unl = s_batch_unl.to(device, non_blocking=True)
 
             f_lab_b, s_lab_b, y_lab_b = next(iter(dataloader_lab_train))
             f_lab_b = f_lab_b.to(device, non_blocking=True)
@@ -284,25 +284,25 @@ if __name__ == "__main__":
 
             with autocast('cuda'):
                 # ---- unlabeled: contrastive objective (unchanged) ----
-                f_strong, s_strong = strong_augment_pair(f_batch_unl, s_batch_unl)
-                cls_token_m1, cls_token_m2, proj_m1, proj_m2 = model(f_batch_unl, s_batch_unl)
-                _, _, proj_m1_aug, proj_m2_aug = model(f_strong, s_strong)
+                #f_strong, s_strong = strong_augment_pair(f_batch_unl, s_batch_unl)
+                #cls_token_m1, cls_token_m2, proj_m1, proj_m2 = model(f_batch_unl, s_batch_unl)
+                #_, _, proj_m1_aug, proj_m2_aug = model(f_strong, s_strong)
 
-                n_feat = cls_token_m1.shape[-1]
-                shared_n_feat = int(n_feat * SHARED_UNSHARED / 100)
+                #n_feat = cls_token_m1.shape[-1]
+                #shared_n_feat = int(n_feat * SHARED_UNSHARED / 100)
 
-                emb_m1_inv = cls_token_m1[:, :shared_n_feat]
-                emb_m2_inv = cls_token_m2[:, :shared_n_feat]
-                emb_inv = F.normalize(torch.cat([emb_m1_inv, emb_m2_inv], dim=0), dim=1)
+                #emb_m1_inv = cls_token_m1[:, :shared_n_feat]
+                #emb_m2_inv = cls_token_m2[:, :shared_n_feat]
+                #emb_inv = F.normalize(torch.cat([emb_m1_inv, emb_m2_inv], dim=0), dim=1)
 
-                repr_m1 = F.normalize(torch.cat([proj_m1, proj_m1_aug], dim=0), dim=1)
-                repr_m2 = F.normalize(torch.cat([proj_m2, proj_m2_aug], dim=0), dim=1)
+                #repr_m1 = F.normalize(torch.cat([proj_m1, proj_m1_aug], dim=0), dim=1)
+                #repr_m2 = F.normalize(torch.cat([proj_m2, proj_m2_aug], dim=0), dim=1)
 
-                labels_cls_loss = torch.arange(f_batch_unl.shape[0]).repeat(2).to(device)
+                #labels_cls_loss = torch.arange(f_batch_unl.shape[0]).repeat(2).to(device)
 
-                loss_m1    = NTXentLoss(repr_m1, labels_cls_loss, temperature=1.0)
-                loss_m2    = NTXentLoss(repr_m2, labels_cls_loss, temperature=1.0)
-                loss_cross = NTXentLoss(emb_inv, labels_cls_loss, temperature=1.0)
+                #loss_m1    = NTXentLoss(repr_m1, labels_cls_loss, temperature=1.0)
+                #loss_m2    = NTXentLoss(repr_m2, labels_cls_loss, temperature=1.0)
+                #loss_cross = NTXentLoss(emb_inv, labels_cls_loss, temperature=1.0)
 
                 # ---- labeled: last-layer CLS classification (no ALF) ----
                 logits_lab, _, _ = model.classify_last_layer(f_lab_b, s_lab_b)
