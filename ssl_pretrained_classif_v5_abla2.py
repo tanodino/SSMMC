@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from torch.amp import autocast, GradScaler
+from torch.utils.checkpoint import checkpoint
 from sklearn.metrics import f1_score
 
 from model import SFFCConfig, ViTEncoder
@@ -66,6 +67,39 @@ class PretrainModelV4_NoALF(nn.Module):
         cls_m2 = self.modality_2_encoder(x2)   # [B, D]
         concat = torch.cat([cls_m1, cls_m2], dim=1)   # [B, 2D]
         return self.classifier(concat), cls_m1, cls_m2
+
+
+# ==========================================================================
+# Gradient checkpointing wrapper (ported from ssl_pretrained_classif_v5's
+# ablation-1 script) -- trades recomputation for activation memory on the
+# plain forward() / classify_last_layer() path. Needed here because,
+# unlike ablation 3 (loss = loss_cls only), this ablation backpropagates
+# through ALL THREE forward passes per step (original unlabeled, strongly
+# augmented, and labeled) -- there's no graph that can be dropped for
+# free, so memory has to be cut structurally instead.
+# ==========================================================================
+
+def wrap_gradient_checkpointing(transformer_encoder):
+    original_layers = transformer_encoder.layers
+
+    class CheckpointedTransformerEncoder(nn.Module):
+        def __init__(self, layers, norm):
+            super().__init__()
+            self.layers = layers
+            self.norm = norm
+
+        def forward(self, src, mask=None, src_key_padding_mask=None):
+            x = src
+            for layer in self.layers:
+                if torch.is_grad_enabled():
+                    x = checkpoint(layer, x, mask, src_key_padding_mask, use_reentrant=False)
+                else:
+                    x = layer(x, mask, src_key_padding_mask)
+            if self.norm is not None:
+                x = self.norm(x)
+            return x
+
+    return CheckpointedTransformerEncoder(original_layers, transformer_encoder.norm)
 
 
 # ==========================================================================
@@ -240,6 +274,12 @@ if __name__ == "__main__":
 
     model = PretrainModelV4_NoALF(config, num_classes=n_classes).to(device)
     load_full_pretrained_checkpoint(model, checkpoint_path, device)
+
+    # ---- NEW: gradient checkpointing on both encoders (fixes the CUDA OOM
+    # in classify_last_layer's forward -- see module docstring above) ----
+    model.modality_1_encoder.transformer = wrap_gradient_checkpointing(model.modality_1_encoder.transformer)
+    model.modality_2_encoder.transformer = wrap_gradient_checkpointing(model.modality_2_encoder.transformer)
+    print("Gradient checkpointing active on both encoders")
 
     if freeze_encoder:
         freeze_pretrained_backbone(model, freeze_projectors=False)
