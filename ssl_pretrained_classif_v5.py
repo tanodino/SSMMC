@@ -379,7 +379,7 @@ def parse_args():
     parser.add_argument("--all_layers_combination", action="store_true", default=False,
                     help="freeze the encoders (projectors still trainable)")
     
-    parser.add_argument("--no_crossmodal_ssl", action="store_true", default=True,
+    parser.add_argument("--no_crossmodal_ssl", action="store_false", default=True,
                     help="deactivate the crossmodal ssl loss")
 
     parser.add_argument("--grad-checkpointing", action=argparse.BooleanOptionalAction, default=True,
