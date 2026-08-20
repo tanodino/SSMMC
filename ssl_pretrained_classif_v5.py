@@ -599,7 +599,7 @@ if __name__ == "__main__":
 
                 loss = 0.5 * (loss_m1 + loss_m2) + LAMBDA_CLS * loss_cls
                 if crossmodal_ssl:
-                    print("add loss_cross")
+                    #print("add loss_cross")
                     loss = loss + loss_cross
 
             scaler.scale(loss).backward()
