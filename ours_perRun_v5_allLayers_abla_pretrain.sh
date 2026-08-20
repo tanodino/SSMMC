@@ -25,4 +25,4 @@ cd $WORK/SSMMC/SSMMC
 # $4 - per-class labels
 # $5 - runID
 
-srun python ssl_pretrained_classif_v5.py $1 $2 $3 $4 $5 $1/PRETRAIN_ABLA/checkpoint_latest.pth --output_dir OURS_ABLA0_NOPretrain --all_layers_combination
+srun python ssl_pretrained_classif_v5.py $1 $2 $3 $4 $5 $1/PRETRAIN_ABLA/checkpoint_latest.pth --output_dir OURS_ABLA0_NOPretrain --all_layers_combination --no_crossmodal_ssl
