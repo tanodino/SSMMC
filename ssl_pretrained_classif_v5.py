@@ -379,7 +379,7 @@ def parse_args():
     parser.add_argument("--all_layers_combination", action="store_true", default=False,
                     help="freeze the encoders (projectors still trainable)")
     
-    parser.add_argument("--crossmodal_ssl", action="store_true", default=True,
+    parser.add_argument("--no_crossmodal_ssl", action="store_true", default=True,
                     help="deactivate the crossmodal ssl loss")
 
     parser.add_argument("--grad-checkpointing", action=argparse.BooleanOptionalAction, default=True,
@@ -423,7 +423,7 @@ if __name__ == "__main__":
     freeze_encoder = args.freeze
     output_dir = args.output_dir
     all_layer_combination = args.all_layers_combination
-    crossmodal_ssl = args.crossmodal_ssl
+    crossmodal_ssl = args.no_crossmodal_ssl
 
     # ---- tunables (now overridable from the command line) ----
     SHARED_UNSHARED = args.shared_unshared
@@ -528,7 +528,10 @@ if __name__ == "__main__":
         freeze_pretrained_backbone(model, freeze_projectors=False)
         print("Encoders FROZEN (projectors still trainable)")
     else:
-        print("Encoders UNFROZEN -- continuing to update via loss_m1/loss_m2/loss_cross")
+        if crossmodal_ssl:
+            print("Encoders UNFROZEN -- continuing to update via loss_m1/loss_m2/loss_cross")
+        else:
+            print("Encoders UNFROZEN -- continuing to update via loss_m1/loss_m2")
 
     backbone_params = [p for p in (list(model.modality_1_encoder.parameters())
                                     + list(model.modality_2_encoder.parameters())
