@@ -378,6 +378,9 @@ def parse_args():
                         help="freeze the encoders (projectors still trainable)")
     parser.add_argument("--all_layers_combination", action="store_true", default=False,
                     help="freeze the encoders (projectors still trainable)")
+    
+    parser.add_argument("--crossmodal_ssl", action="store_true", default=True,
+                    help="deactivate the crossmodal ssl loss")
 
     parser.add_argument("--grad-checkpointing", action=argparse.BooleanOptionalAction, default=True,
                         help="gradient checkpointing on both encoders (default: on); "
@@ -402,6 +405,7 @@ def parse_args():
     parser.add_argument("--layer-dropout", type=float, default=0.5,
                         help="per-layer dropout probability in the fusion module (default: 0.2)")
 
+
     return parser.parse_args()
 
 
@@ -419,6 +423,7 @@ if __name__ == "__main__":
     freeze_encoder = args.freeze
     output_dir = args.output_dir
     all_layer_combination = args.all_layers_combination
+    crossmodal_ssl = args.crossmodal_ssl
 
     # ---- tunables (now overridable from the command line) ----
     SHARED_UNSHARED = args.shared_unshared
@@ -589,7 +594,10 @@ if __name__ == "__main__":
                 logits_lab, _, _ = model.classify_alf(f_lab_b, s_lab_b, use_checkpointing=USE_GRAD_CHECKPOINTING)
                 loss_cls = F.cross_entropy(logits_lab, y_lab_b)
 
-                loss = 0.5 * (loss_m1 + loss_m2) + loss_cross + LAMBDA_CLS * loss_cls
+                loss = 0.5 * (loss_m1 + loss_m2) + LAMBDA_CLS * loss_cls
+                if crossmodal_ssl:
+                    print("add loss_cross")
+                    loss = loss + loss_cross
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
