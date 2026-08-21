@@ -522,8 +522,8 @@ if __name__ == "__main__":
         print("Gradient checkpointing active on both encoders (forward() path)")
 
     if freeze_encoder:
-        freeze_pretrained_backbone(model, freeze_projectors=False)
-        print("Encoders FROZEN (projectors still trainable)")
+        freeze_pretrained_backbone(model, freeze_projectors=True)
+        print("Encoders FROZEN (projectors frozen)")
     else:
         print("Encoders UNFROZEN -- continuing to update via loss_m1/loss_m2/loss_cross")
 
