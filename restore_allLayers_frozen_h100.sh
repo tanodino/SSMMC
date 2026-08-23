@@ -34,5 +34,8 @@ cd $WORK/SSMMC/SSMMC
 #srun python restore_abla1.py SUNRGBD RGB DEPTH 25 --output_dir OURS_FROZEN_MLA --all_layers_combination
 #srun python restore_abla1.py SUNRGBD RGB DEPTH 50 --output_dir OURS_FROZEN_MLA --all_layers_combination
 
-srun python restore_ours_v5.py SUNRGBD RGB DEPTH 5 --all_layers_combination --output_dir OURS_ABLA0_NOPretrain
-srun python restore_ours_v5.py SUNRGBD RGB DEPTH 25 --all_layers_combination --output_dir OURS_ABLA0_NOPretrain
+#srun python restore_ours_v5.py SUNRGBD RGB DEPTH 5 --all_layers_combination --output_dir OURS_ABLA0_NOPretrain
+#srun python restore_ours_v5.py SUNRGBD RGB DEPTH 25 --all_layers_combination --output_dir OURS_ABLA0_NOPretrain
+
+srun python restore_ours_v5.py TRISTAR DEPTH THERMAL 5 --all_layers_combination --output_dir OURS_ABLA0_NOPretrain
+srun python restore_ours_v5.py TRISTAR DEPTH THERMAL 25 --all_layers_combination --output_dir OURS_ABLA0_NOPretrain
