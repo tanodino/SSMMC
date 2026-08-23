@@ -5,12 +5,13 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=20
+#SBATCH --cpus-per-task=24
 #SBATCH --hint=nomultithread
-#SBATCH --time=10:00:00
-#SBATCH --qos=qos_gpu_h100-t3
+#SBATCH --time=02:00:00
+#SBATCH --qos=qos_gpu_h100-dev
 #SBATCH --constraint=h100
 #SBATCH --account=xfp@h100
+
 
 module purge
 module load arch/h100
