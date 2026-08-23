@@ -21,6 +21,15 @@ export PYTHONUSERBASE=$WORK/.local
 
 cd $WORK/SSMMC/SSMMC
 
-srun python restore_abla1.py EUROSAT SAR MS 5 --output_dir OURS_FROZEN_MLA --all_layers_combination
-srun python restore_abla1.py EUROSAT SAR MS 25 --output_dir OURS_FROZEN_MLA --all_layers_combination
-srun python restore_abla1.py EUROSAT SAR MS 50 --output_dir OURS_FROZEN_MLA --all_layers_combination
+#srun python restore_abla1.py EUROSAT SAR MS 5 --output_dir OURS_FROZEN_MLA --all_layers_combination
+#srun python restore_abla1.py EUROSAT SAR MS 25 --output_dir OURS_FROZEN_MLA --all_layers_combination
+#srun python restore_abla1.py EUROSAT SAR MS 50 --output_dir OURS_FROZEN_MLA --all_layers_combination
+
+
+srun python restore_abla1.py TRISTAR DEPTH THERMAL 5 --output_dir OURS_FROZEN_MLA --all_layers_combination
+srun python restore_abla1.py TRISTAR DEPTH THERMAL 25 --output_dir OURS_FROZEN_MLA --all_layers_combination
+srun python restore_abla1.py TRISTAR DEPTH THERMAL 50 --output_dir OURS_FROZEN_MLA --all_layers_combination
+
+srun python restore_abla1.py SUNRGBD RGB DEPTH 5 --output_dir OURS_FROZEN_MLA --all_layers_combination
+srun python restore_abla1.py SUNRGBD RGB DEPTH 25 --output_dir OURS_FROZEN_MLA --all_layers_combination
+srun python restore_abla1.py SUNRGBD RGB DEPTH 50 --output_dir OURS_FROZEN_MLA --all_layers_combination
