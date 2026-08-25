@@ -5,6 +5,7 @@ import os
 import copy
 import numpy as np
 import torch
+import argparse
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
@@ -178,12 +179,70 @@ def compute_reference_embedding(model: PretrainModelV4_NoALF, f_lab: torch.Tenso
     return F.normalize(torch.cat([cls_m1, cls_m2], dim=1), dim=1)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Resume full pretrained model, continue original SSL objective, "
+                    "classify via layer-dropout-regularized multi-layer fusion."
+    )
+    # ---- required positional arguments (same order as the old sys.argv[1:6]) ----
+    parser.add_argument("dataset_path", type=str, help="e.g. SUNRGBD")
+    parser.add_argument("first_prefix", type=str, help="e.g. RGB")
+    parser.add_argument("second_prefix", type=str, help="e.g. DEPTH")
+    parser.add_argument("perc", type=str, help="labeled percentage/count identifier, e.g. 5")
+    parser.add_argument("run_id", type=str, help="split id, e.g. 0")
+    parser.add_argument("checkpoint_path", type=str, help="path to the full pretrained checkpoint")
+
+    # ---- optional flags ----
+    parser.add_argument("--freeze", action="store_true",
+                        help="freeze the encoders (projectors still trainable)")
+    parser.add_argument("--no_crossmodal_ssl", action="store_false", default=True,
+                    help="deactivate the crossmodal ssl loss")
+    parser.add_argument("--grad-checkpointing", action=argparse.BooleanOptionalAction, default=True,
+                        help="gradient checkpointing on both encoders (default: on); "
+                             "pass --no-grad-checkpointing to disable")
+
+    # ---- optional tunables (previously hardcoded constants) ----
+    parser.add_argument("--output_dir", type=str, default="OURS_ABLA2_NoMLA",
+                        help="output directory, default OURS_ABLA2_NoMLA")
+    parser.add_argument("--shared-unshared", type=int, default=50,
+                        help="invariant/specific split %% for loss_cross (default: 50)")
+    parser.add_argument("--lambda-cls", type=float, default=1.0,
+                        help="weight of the classifier CE loss (default: 1.0)")
+    parser.add_argument("--k-neighbors", type=int, default=5,
+                        help="k for the k-NN evaluation metric (default: 5)")
+    parser.add_argument("--backbone-lr", type=float, default=5e-6,
+                        help="LR for encoders + projectors (default: 5e-6)")
+    parser.add_argument("--fresh-lr", type=float, default=5e-5,
+                        help="LR for classifier + alf_m1 + alf_m2 (default: 5e-5)")
+    parser.add_argument("--gating", type=str, default="sigmoid",
+                        choices=["softmax", "sigmoid", "tanh"],
+                        help="layer-fusion gating function (default: sigmoid)")
+    parser.add_argument("--layer-dropout", type=float, default=0.5,
+                        help="per-layer dropout probability in the fusion module (default: 0.2)")
+
+    return parser.parse_args()
+
+
 # ==========================================================================
 # Main
 # ==========================================================================
 
 if __name__ == "__main__":
     batch_size = 16
+    args = parse_args()
+    print(vars(args))
+
+    dataset_path = args.dataset_path
+    first_prefix = args.first_prefix
+    second_prefix = args.second_prefix
+    perc = args.perc
+    run_id = args.run_id
+    checkpoint_path = args.checkpoint_path
+    freeze_encoder = args.freeze
+    output_dir = args.output_dir
+    crossmodal_ssl = args.no_crossmodal_ssl
+
+    '''
     dataset_path = sys.argv[1]
     first_prefix = sys.argv[2]
     second_prefix = sys.argv[3]
@@ -192,6 +251,7 @@ if __name__ == "__main__":
     checkpoint_path = sys.argv[6]
     freeze_encoder = "freeze" if "freeze" in sys.argv else None
     print(sys.argv)
+    '''
 
     # ---- tunables (identical to ssl_pretrained_classif_v4.py) ----
     SHARED_UNSHARED = 50
@@ -222,7 +282,7 @@ if __name__ == "__main__":
     print("n_classes %d" % n_classes)
 
     # ✅ distinct output dir to avoid overwriting the MLA results
-    dir_name = dataset_path + "/OURS_ABLA2_NoMLA" #Multi-Layer Aggregation
+    dir_name = dataset_path + "/"+output_dir  #Multi-Layer Aggregation
     os.makedirs(dir_name, exist_ok=True)
     output_file = dir_name + "/%s_%s.pth" % (perc, run_id)
 
@@ -348,7 +408,9 @@ if __name__ == "__main__":
                 logits_lab, _, _ = model.classify_last_layer(f_lab_b, s_lab_b)
                 loss_cls = F.cross_entropy(logits_lab, y_lab_b)
 
-                loss = 0.5 * (loss_m1 + loss_m2) + loss_cross + LAMBDA_CLS * loss_cls
+                loss = 0.5 * (loss_m1 + loss_m2) + LAMBDA_CLS * loss_cls
+                if crossmodal_ssl:
+                    loss = loss + loss_cross
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
