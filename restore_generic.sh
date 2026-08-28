@@ -1,0 +1,46 @@
+#!/bin/bash
+#SBATCH --job-name=ours
+#SBATCH --output=ours_V5_long_%j.out
+#SBATCH --error=ours_V5_long_%j.err
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=24
+#SBATCH --hint=nomultithread
+#SBATCH --time=02:00:00
+#SBATCH --qos=qos_gpu_h100-dev
+#SBATCH --constraint=h100
+#SBATCH --account=xfp@h100
+
+
+module purge
+module load arch/h100
+module load pytorch-gpu/py3/2.4.0
+
+export PYTHONUSERBASE=$WORK/.local
+
+cd $WORK/SSMMC/SSMMC
+
+python restore_abla3.py SUNRGBD RGB DEPTH 5 --output_dir V6_ABLA3
+python restore_abla3.py SUNRGBD RGB DEPTH 25 --output_dir V6_ABLA3
+python restore_abla3.py SUNRGBD RGB DEPTH 50 --output_dir V6_ABLA3
+
+
+#srun python restore_abla1.py EUROSAT SAR MS 5 --output_dir OURS_FROZEN_MLA --all_layers_combination
+#srun python restore_abla1.py EUROSAT SAR MS 25 --output_dir OURS_FROZEN_MLA --all_layers_combination
+#srun python restore_abla1.py EUROSAT SAR MS 50 --output_dir OURS_FROZEN_MLA --all_layers_combination
+
+
+#srun python restore_abla1.py TRISTAR DEPTH THERMAL 5 --output_dir OURS_FROZEN_MLA --all_layers_combination
+#srun python restore_abla1.py TRISTAR DEPTH THERMAL 25 --output_dir OURS_FROZEN_MLA --all_layers_combination
+#srun python restore_abla1.py TRISTAR DEPTH THERMAL 50 --output_dir OURS_FROZEN_MLA --all_layers_combination
+
+#srun python restore_abla1.py SUNRGBD RGB DEPTH 5 --output_dir OURS_FROZEN_MLA --all_layers_combination
+#srun python restore_abla1.py SUNRGBD RGB DEPTH 25 --output_dir OURS_FROZEN_MLA --all_layers_combination
+#srun python restore_abla1.py SUNRGBD RGB DEPTH 50 --output_dir OURS_FROZEN_MLA --all_layers_combination
+
+#srun python restore_ours_v5.py SUNRGBD RGB DEPTH 5 --all_layers_combination --output_dir OURS_ABLA0_NOPretrain
+#srun python restore_ours_v5.py SUNRGBD RGB DEPTH 25 --all_layers_combination --output_dir OURS_ABLA0_NOPretrain
+
+srun python restore_ours_v5.py TRISTAR DEPTH THERMAL 5 --all_layers_combination --output_dir OURS_ABLA0_NOPretrain
+srun python restore_ours_v5.py TRISTAR DEPTH THERMAL 25 --all_layers_combination --output_dir OURS_ABLA0_NOPretrain
