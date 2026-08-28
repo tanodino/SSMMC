@@ -21,9 +21,13 @@ export PYTHONUSERBASE=$WORK/.local
 
 cd $WORK/SSMMC/SSMMC
 
-python restore_abla3.py SUNRGBD RGB DEPTH 5 --output_dir V6_ABLA3
-python restore_abla3.py SUNRGBD RGB DEPTH 25 --output_dir V6_ABLA3
-python restore_abla3.py SUNRGBD RGB DEPTH 50 --output_dir V6_ABLA3
+#python restore_abla3.py SUNRGBD RGB DEPTH 5 --output_dir V6_ABLA3
+#python restore_abla3.py SUNRGBD RGB DEPTH 25 --output_dir V6_ABLA3
+#python restore_abla3.py SUNRGBD RGB DEPTH 50 --output_dir V6_ABLA3
+
+python restore_abla3.py TRISTAR DEPTH THERMAL 5 --output_dir V6_ABLA3
+python restore_abla3.py TRISTAR DEPTH THERMAL 25 --output_dir V6_ABLA3
+
 
 
 #srun python restore_abla1.py EUROSAT SAR MS 5 --output_dir OURS_FROZEN_MLA --all_layers_combination
