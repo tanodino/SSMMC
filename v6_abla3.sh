@@ -7,13 +7,14 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=10
 #SBATCH --hint=nomultithread
-#SBATCH --time=20:00:00
-#SBATCH --qos=qos_gpu-t3
-#SBATCH --constraint=v100-32g
-#SBATCH --account=xfp@v100
+#SBATCH --time=10:00:00
+#SBATCH --qos=qos_gpu_h100-t3
+#SBATCH --constraint=h100
+#SBATCH --account=xfp@h100
 
 module purge
-module load pytorch-gpu/py3/2.3.0
+module load arch/h100
+module load pytorch-gpu/py3/2.4.0
 
 #module load arch/h100
 #module load pytorch-gpu/py3/2.4.0
