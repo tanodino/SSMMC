@@ -110,7 +110,7 @@ if __name__ == "__main__":
         drop_last=False
     )
 
-    dataloader_unl_train = DataLoader(unl_dataset, shuffle=True, batch_size=batch_size*8, 
+    dataloader_unl_train = DataLoader(unl_dataset, shuffle=True, batch_size=batch_size*RATIO_LABELED_UNLABELED_BATCHES, 
         num_workers=6,           # parallel CPU data loading
         pin_memory=True,         # faster CPU→GPU transfer
         persistent_workers=True, # keeps workers alive between epochs
