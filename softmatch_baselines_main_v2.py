@@ -1,0 +1,305 @@
+"""
+softmatch_baselines_main_v2.py -- SoftMatch baseline, corrected version of softmatch_baselines_main.py.
+
+Same data, model, protocol, optimiser, EMA, augmentations and truncated-Gaussian weighting
+(model.SoftMatchWeighting, unchanged) as v1. Adds the missing Uniform Alignment (UA,
+SoftMatch paper Sec. 3.3), following the official USB implementation
+(microsoft/Semi-supervised-learning, semilearn/algorithms/softmatch/softmatch.py with
+dist_align=True, dist_uniform=True, and semilearn/algorithms/hooks/dist_align.py DistAlignEMAHook):
+
+    p_model <- EMA(0.999) of the batch-mean weak-view probabilities (first batch: plain mean)
+    aligned  = SumNorm(probs_weak * (1/C + 1e-6) / (p_model + 1e-6))
+    the Gaussian statistics (mu, var) and the sample weights are computed on the ALIGNED
+    max-probabilities, while the hard pseudo-labels are taken from the RAW weak-view
+    prediction (as in USB: "uniform alignment in softmatch do not use aligned probs for
+    generating pseudo labels").
+
+Checkpoints: <dataset>/SOFTMATCH_V2_<SF|FC>/<perc>_<run>.pth (v1 results are not overwritten).
+Usage (same arguments as v1):
+    python softmatch_baselines_main_v2.py EUROSAT_STD SAR MS 5 0 FC
+"""
+import itertools
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+from typing import Tuple, Optional
+import numpy as np
+from model import ViTEncoder
+from torch.optim.lr_scheduler import SequentialLR, LinearLR, CosineAnnealingWarmRestarts
+import time
+import sys
+from torch.utils.data import TensorDataset, DataLoader
+from functions import evaluation, weak_augment_pair, strong_augment_pair, MOMENTUM_EMA, cumulate_EMA, WARM_UP_EPOCH_EMA, EPOCHS, WARM_UP_EPOCH_SSL, RATIO_LABELED_UNLABELED_BATCHES, load_pretrained_encoders, freeze_pretrained_encoders
+import random
+from torch.cuda.amp import GradScaler, autocast
+from torch.utils.checkpoint import checkpoint
+import os
+import warnings
+#from msc import MSCConfig, MSCModel, MSCLoss
+from model import SFFCConfig, ScoreFusion, FusionConcat, SoftMatchWeighting
+import time
+from sklearn.metrics import f1_score
+import copy
+warnings.filterwarnings("ignore")
+
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
+
+class UniformAlignment:
+    """USB DistAlignEMAHook with p_target_type='uniform'."""
+
+    def __init__(self, num_classes, momentum=0.999, device="cuda"):
+        self.m = momentum
+        self.p_target = torch.ones(num_classes, device=device) / num_classes
+        self.p_model = None
+
+    @torch.no_grad()
+    def __call__(self, probs_weak):
+        probs_weak = probs_weak.detach().float()
+        batch_mean = probs_weak.mean(dim=0)
+        if self.p_model is None:
+            self.p_model = batch_mean
+        else:
+            self.p_model = self.p_model * self.m + batch_mean * (1 - self.m)
+        aligned = probs_weak * (self.p_target + 1e-6) / (self.p_model + 1e-6)
+        return aligned / aligned.sum(dim=-1, keepdim=True)
+
+
+if __name__ == "__main__":
+    batch_size = 16
+    dataset_path = sys.argv[1]
+    first_prefix = sys.argv[2]
+    second_prefix = sys.argv[3]
+    perc = sys.argv[4]
+    run_id = sys.argv[5]
+    sf_or_fc = sys.argv[6] # SF = score fusion / FC = Feature Concat
+    pretrained_path = sys.argv[7] if len(sys.argv) > 7 else None   # <-- new, optional
+    print(sys.argv)
+    
+    first_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, first_prefix) )
+    second_data = np.load("%s/%s_data_normalized.npy"%(dataset_path, second_prefix) )
+    full_labels = np.load("%s/labels.npy"%dataset_path)
+    train_idx = np.load("%s/train_idx.npy"%dataset_path)
+    labelled_idx = np.load("%s/labelled_samples_%s_%s.npy"%(dataset_path, perc, run_id))
+    
+    full_train_idx = np.arange(len(train_idx))
+    unlabelled_idx = np.setdiff1d(full_train_idx, labelled_idx)
+    
+    f_lab_data_train = first_data[train_idx][labelled_idx]
+    s_lab_data_train = second_data[train_idx][labelled_idx]
+    f_unlab_data_train = first_data[train_idx][unlabelled_idx]
+    s_unlab_data_train = second_data[train_idx][unlabelled_idx]
+
+    labels = full_labels[train_idx][labelled_idx]
+
+    print("f_lab_data_train %d"%len(f_lab_data_train))
+    print("f_unlab_data_train %d"%len(f_unlab_data_train))
+
+    n_classes = len(np.unique(labels))
+
+    dir_name = dataset_path+"/SOFTMATCH_V2_%s"%sf_or_fc
+    os.makedirs(dir_name, exist_ok=True)
+    output_file = dir_name+"/%s_%s.pth"%(perc, run_id)
+
+    #batch_size = pretraining_batch_size
+    print("batch_size %d"%batch_size)
+
+    ########## TEST DATA ##########
+    test_idx = np.setdiff1d(np.arange(full_labels.shape[0]), train_idx)
+    f_data_test = first_data[test_idx]
+    s_data_test = second_data[test_idx]
+    labels_test = full_labels[test_idx]
+
+    x_tensor_f_test = torch.tensor(f_data_test, dtype=torch.float32)
+    x_tensor_s_test = torch.tensor(s_data_test, dtype=torch.float32)
+    y_tensor_test = torch.tensor(labels_test, dtype=torch.int64)
+    test_dataset = TensorDataset(x_tensor_f_test, x_tensor_s_test, y_tensor_test)
+    dataloader_test = DataLoader(test_dataset, shuffle=False, batch_size=batch_size*8, 
+        num_workers=6,           # parallel CPU data loading
+        pin_memory=True,         # faster CPU→GPU transfer
+        persistent_workers=True, # keeps workers alive between epochs
+        prefetch_factor=4,        # prefetch batches ahead of time
+        drop_last=False
+    )
+    ########## TEST DATA ##########
+    print("TEST DATA built")
+    sys.stdout.flush()
+
+    x_tensor_f_lab = torch.tensor(f_lab_data_train, dtype=torch.float32)
+    x_tensor_s_lab = torch.tensor(s_lab_data_train, dtype=torch.float32)
+    y_tensor = torch.tensor(labels, dtype=torch.int64)
+    lab_dataset = TensorDataset(x_tensor_f_lab, x_tensor_s_lab, y_tensor)
+    
+    x_tensor_f_unl = torch.tensor(f_unlab_data_train, dtype=torch.float32)
+    x_tensor_s_unl = torch.tensor(s_unlab_data_train, dtype=torch.float32)
+    unl_dataset = TensorDataset(x_tensor_f_unl, x_tensor_s_unl)
+
+    dataloader_lab_train = DataLoader(lab_dataset, shuffle=True, batch_size=batch_size, 
+        num_workers=0,           # parallel CPU data loading
+        pin_memory=True,         # faster CPU→GPU transfer
+        drop_last=False
+    )
+
+    dataloader_unl_train = DataLoader(unl_dataset, shuffle=True, batch_size=batch_size*RATIO_LABELED_UNLABELED_BATCHES, 
+        num_workers=6,           # parallel CPU data loading
+        pin_memory=True,         # faster CPU→GPU transfer
+        persistent_workers=True, # keeps workers alive between epochs
+        prefetch_factor=4,        # prefetch batches ahead of time
+        drop_last=True
+    )
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    print("all dataloader built")
+    sys.stdout.flush()
+
+    config = SFFCConfig(
+        img_size_m1 = f_lab_data_train.shape[2], img_size_m2 = s_lab_data_train.shape[2], 
+        patch_size_m1 = 8, patch_size_m2 = 8, 
+        in_chans_m1 = f_lab_data_train.shape[1], in_chans_m2 = s_lab_data_train.shape[1], 
+        num_classes=n_classes, hidden_dim=256, dropout=0.1
+    )
+
+    if sf_or_fc == "SF":
+        model = ScoreFusion(config).to(device)
+        loss_fn = nn.NLLLoss()
+    elif sf_or_fc == "FC":
+        model = FusionConcat(config).to(device)
+        loss_fn = nn.CrossEntropyLoss() #MSCLoss(config)
+    else:
+        print("NO METHOD DEFINED")
+        exit(0)
+
+    if pretrained_path is not None:                                    # <-- new
+        load_pretrained_encoders(model, pretrained_path, device)       # <-- new
+        freeze_pretrained_encoders(model)
+
+    model.compile()
+    loss_fn_none = nn.CrossEntropyLoss(reduction="none")
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    scaler = GradScaler()
+    print("model created and compiled")
+    sys.stdout.flush()
+
+    softmatch = SoftMatchWeighting(num_classes=n_classes, momentum=0.999, n_sigma=2, device=device)
+    uniform_alignment = UniformAlignment(num_classes=n_classes, momentum=0.999, device=device)
+    lambda_u = 1.0  # weight of the unsupervised loss term
+
+    #for epoch in range(start_epoch, max_num_epochs):
+    step = 0
+    ema_weights = None
+    for epoch in range(EPOCHS):
+        #for f_batch, s_batch, y_batch in dataloader_lab_train:
+        start_time = time.time()
+        total_loss = torch.zeros((), device=device) 
+        n_batches = 0
+        use_ssl = epoch >= WARM_UP_EPOCH_SSL
+        weight_sum = 0.0
+        majority_frac_sum = 0.0
+        ssl_batches = 0
+        mu_sum = 0.0
+        var_sum = 0.0
+
+        for (f_batch, s_batch, y_batch), (f_batch_unl, s_batch_unl) in zip(
+            itertools.cycle(dataloader_lab_train), dataloader_unl_train):           
+
+            model.train()
+            optimizer.zero_grad(set_to_none=True)
+            f_batch = f_batch.to(device, non_blocking=True)
+            s_batch = s_batch.to(device, non_blocking=True)
+            y_batch = y_batch.to(device, non_blocking=True)
+            
+            f_batch_unl = f_batch_unl.to(device, non_blocking=True)
+            s_batch_unl = s_batch_unl.to(device, non_blocking=True)
+            
+            with autocast():
+                pred_lab = model(f_batch, s_batch)
+                if sf_or_fc == "SF":
+                    sup_loss = loss_fn(torch.log(pred_lab.clamp(min=1e-8)), y_batch)
+                else:
+                    sup_loss = loss_fn(pred_lab, y_batch)
+                
+                if use_ssl:
+                    f_weak, s_weak = weak_augment_pair(f_batch_unl, s_batch_unl)
+                    f_strong, s_strong = strong_augment_pair(f_batch_unl, s_batch_unl)
+
+                    with torch.no_grad():
+                        model.eval()
+                        pred_weak = model(f_weak, s_weak)
+                        if sf_or_fc == "FC":
+                            probs_weak = F.softmax(pred_weak, dim=-1)
+                        else:
+                            probs_weak = pred_weak  # SF already outputs a distribution
+                        _, pseudo_labels = probs_weak.max(dim=-1)        # hard pseudo-labels from RAW probs
+                        model.train()
+
+                    probs_aligned = uniform_alignment(probs_weak)          # UA, as USB dist_align
+                    max_probs_aligned = probs_aligned.max(dim=-1)[0]
+                    softmatch.update(max_probs_aligned)                    # Gaussian stats on ALIGNED probs
+                    sample_weights = softmatch.weight(max_probs_aligned)
+
+                    weight_sum += sample_weights.mean().item()
+                    majority_frac_sum += (
+                        pseudo_labels.bincount(minlength=n_classes).max() / pseudo_labels.numel()
+                    ).item()
+                    mu_sum += softmatch.prob_max_mu.item()
+                    var_sum += softmatch.prob_max_var.item()
+                    ssl_batches += 1
+
+
+                    pred_strong = model(f_strong, s_strong)
+                    if sf_or_fc == "SF":
+                        log_probs_strong = torch.log(pred_strong.clamp(min=1e-8))
+                        unsup_loss_per_sample = F.nll_loss(log_probs_strong, pseudo_labels, reduction="none")
+                    else:
+                        unsup_loss_per_sample = loss_fn_none(pred_strong, pseudo_labels)
+
+                    unsup_loss = (unsup_loss_per_sample * sample_weights).mean()                
+                    loss = sup_loss + lambda_u * unsup_loss
+                else:
+                    loss = sup_loss
+            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            total_loss += loss.detach()
+            n_batches += 1
+
+        end = time.time()
+        elapsed_time = time.time() - start_time
+
+        if epoch >= WARM_UP_EPOCH_EMA:
+            ema_weights = cumulate_EMA(model, ema_weights, MOMENTUM_EMA)
+
+        if epoch % 5 == 0:
+            if epoch >= WARM_UP_EPOCH_EMA:
+                current_state_dict = copy.deepcopy(model.state_dict())
+                model.load_state_dict(ema_weights)
+                predictions, test_labels = evaluation(model, dataloader_test, device)    
+                model.load_state_dict(current_state_dict)
+            else:
+                predictions, test_labels = evaluation(model, dataloader_test, device)
+
+            f1_val = f1_score(test_labels, predictions, average="weighted")
+            total_loss = total_loss.item()  
+
+            avg_weight = weight_sum / max(ssl_batches, 1)
+            avg_majority_frac = majority_frac_sum / max(ssl_batches, 1)
+            avg_mu = mu_sum / max(ssl_batches, 1)
+            avg_var = var_sum / max(ssl_batches, 1)
+
+            print(f"epoch {epoch} "
+                f"total={np.mean(total_loss / max(n_batches, 1)):.4f} "
+                f"elapsed_time={elapsed_time:.2f} "
+                f"F1-score={(f1_val * 100):.2f} "
+                f"mean_weight={avg_weight:.3f} "
+                f"majority_frac={avg_majority_frac:.3f} "
+                f"prob_max_mu={avg_mu:.3f} "
+                f"prob_max_var={avg_var:.3f}")
+            sys.stdout.flush()
+    
+    model.load_state_dict(ema_weights)
+    torch.save(model.state_dict(), output_file)
