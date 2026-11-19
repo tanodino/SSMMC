@@ -103,8 +103,13 @@ def main():
         dataset, m1, m2 = entry.split(":")
         first = np.load(f"{dataset}/{m1}_data_normalized.npy", mmap_mode="r")
         second = np.load(f"{dataset}/{m2}_data_normalized.npy", mmap_mode="r")
-        labels = np.load(f"{dataset}/labels.npy")
-        train_idx = np.load(f"{dataset}/train_idx.npy")
+        # labels / train_idx: in the dataset folder, or (Jean Zay layout) in the folder without the
+        # _STD suffix -- the files are identical in both (checked on the workstation, cmp)
+        aux = dataset if os.path.exists(f"{dataset}/labels.npy") else dataset.replace("_STD", "")
+        if aux != dataset:
+            print(f"   labels.npy / train_idx.npy read from {aux}/ (not in {dataset}/)", flush=True)
+        labels = np.load(f"{aux}/labels.npy")
+        train_idx = np.load(f"{aux}/train_idx.npy")
         test_idx = np.setdiff1d(np.arange(labels.shape[0]), train_idx)
         f = torch.tensor(np.asarray(first[test_idx]), dtype=torch.float32)
         s = torch.tensor(np.asarray(second[test_idx]), dtype=torch.float32)
