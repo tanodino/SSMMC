@@ -1,0 +1,5 @@
+step;where;command
+1;Jean Zay login node: get the pilot scripts;cd $WORK/SSMMC/SSMMC && git pull
+2;login node: check the 12 commands (and that the supervised SF checkpoints exist);bash submit_pilot_v3_v100.sh --dry
+3;login node: submit the pilot (12 tasks);bash submit_pilot_v3_v100.sh
+4;after about 1 hour: first epochs of the pilot (F1 and majority_frac every 5 epochs);tail -3 slurm_logs/fixmatch_v3_SF_*_5_*.out slurm_logs/msc_v3_*_5_*.out
