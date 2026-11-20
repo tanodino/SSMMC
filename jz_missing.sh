@@ -1,5 +1,5 @@
 #!/bin/bash
-# Why are some baseline checkpoints missing? For every missing <DS>_STD/<FOLDER>/<perc>_<run>.pth it
+# Why are some baseline / competitor (KDMvC v2, MSC v2) checkpoints missing? For every missing <DS>_STD/<FOLDER>/<perc>_<run>.pth it
 # finds the most recent slurm log of that task and prints the cause (time limit, OOM, Python error,
 # still running...) plus the last lines. Run on the login node:
 #   cd $WORK/SSMMC/SSMMC && bash jz_missing.sh        -> writes jz_missing.txt
@@ -8,12 +8,14 @@ cd $WORK/SSMMC/SSMMC
 echo "== date"; date
 echo "== my jobs still in the queue"; squeue -u $USER -o "%.12i %.40j %.8T %.10M" 2>/dev/null
 for ds in SUNRGBD EUROSAT TRISTAR; do
-  for folder in FIXMATCH_SF FIXMATCH_FC FREEMATCH_V2_SF FREEMATCH_V2_FC SOFTMATCH_V2_SF SOFTMATCH_V2_FC SF FC; do
+  for folder in FIXMATCH_SF FIXMATCH_FC FREEMATCH_V2_SF FREEMATCH_V2_FC SOFTMATCH_V2_SF SOFTMATCH_V2_FC SF FC KDMvC_V2 MSC_V2; do
     fusion=${folder##*_}
     case $folder in
       FIXMATCH_*)  job=fixmatch_${fusion}_${ds} ;;
       FREEMATCH_*) job=freematch_v2_${fusion}_${ds} ;;
       SOFTMATCH_*) job=softmatch_v2_${fusion}_${ds} ;;
+      KDMvC_V2)    job=kdmvc_v2_${ds} ;;
+      MSC_V2)      job=msc_v2_${ds} ;;
       *)           job=baselines_${fusion}_${ds} ;;
     esac
     for perc in 5 25 50; do

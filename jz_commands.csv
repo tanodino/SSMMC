@@ -1,0 +1,8 @@
+step;where;command
+1;Jean Zay login node: get the updated scripts;cd $WORK/SSMMC/SSMMC && git pull
+2;login node: cause of every missing checkpoint (baselines + KDMvC v2 + MSC v2) -> jz_missing.txt;bash jz_missing.sh
+3;login node: check what would be resubmitted (configurations still in the queue are skipped);bash jz_resubmit_missing.sh --dry
+4;login node: resubmit only the missing tasks;bash jz_resubmit_missing.sh
+5;when they are done, login node: open a 2h interactive GPU session;srun --pty --ntasks=1 --cpus-per-task=10 --gres=gpu:1 --hint=nomultithread --qos=qos_gpu-dev --time=02:00:00 -C v100-32g -A xfp@v100 bash
+6;inside the session: export the new checkpoints (already exported ones are skipped);cd $WORK/SSMMC/SSMMC && bash export_predictions_dev.sh && bash export_predictions_dev.sh KDMvC_V2 MSC_V2
+7;login node: archive to download;cd $WORK/SSMMC/SSMMC && tar cf preds_jeanzay_all.tar results/preds_jeanzay
