@@ -31,6 +31,14 @@ module load pytorch-gpu/py3/2.3.0
 
 export PYTHONUSERBASE=$WORK/.local
 
+# Temporary files (torch.compile / Triton caches, multiprocessing pymp-* folders) go to the per-job
+# scratch folder, private to this job and deleted at its end. The node's shared /tmp filled up and
+# concurrent tasks overwrote each other's compile cache (Triton PTX codegen / No space left errors).
+export TMPDIR=${JOBSCRATCH:-$SCRATCH/tmp_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}}
+export TORCHINDUCTOR_CACHE_DIR=$TMPDIR/inductor
+export TRITON_CACHE_DIR=$TMPDIR/triton
+mkdir -p $TMPDIR $TORCHINDUCTOR_CACHE_DIR $TRITON_CACHE_DIR
+
 cd $WORK/SSMMC/SSMMC
 
 echo "task ${SLURM_ARRAY_TASK_ID}: $1 $2 $3 $4 perc=$5 run=${SLURM_ARRAY_TASK_ID} fusion=$6"
