@@ -1,0 +1,6 @@
+step;where;command;what it does
+1;Jean Zay login node;cd $WORK/SSMMC/SSMMC && git pull;go to the project and update the scripts
+2;Jean Zay login node;cd $WORK/SSMMC/SSMMC && ls -la {SUNRGBD,EUROSAT,TRISTAR}_STD/SF/5_{0,1}.pth;check that the 6 supervised SF checkpoints (5 labels/class splits 0-1) exist
+3;Jean Zay login node;cd $WORK/SSMMC/SSMMC && tar cf sf5_ckpt.tar {SUNRGBD,EUROSAT,TRISTAR}_STD/SF/5_{0,1}.pth && md5sum {SUNRGBD,EUROSAT,TRISTAR}_STD/SF/5_{0,1}.pth > sf5_ckpt.md5 && ls -la sf5_ckpt.tar sf5_ckpt.md5;pack the 6 checkpoints and their checksums
+4;your computer;download $WORK/SSMMC/SSMMC/sf5_ckpt.tar and sf5_ckpt.md5;transfer both files
+5;workstation;put sf5_ckpt.tar and sf5_ckpt.md5 in /mnt/DATA/DINO/SSMMClassif;Claude then checks and extracts them and runs the pilot locally
