@@ -1,0 +1,9 @@
+step;where;command;what it does
+1;Jean Zay login node;cd $WORK/SSMMC/SSMMC && git pull;update the scripts (wrn.py, fixmatch_wrn_main.py, mae_init.py, baselines_main_v5.py, semivit_main.py, semivit_array_v100.sh, submit_fixmatch_wrn_v100.sh, submit_semivit_v100.sh)
+2;your computer;copy /mnt/DATA/DINO/SSMMClassif/mae_encoders.tar and mae_encoders.md5 from the workstation to $WORK/SSMMC/SSMMC on Jean Zay;transfer the 6 MAE encoders (515 MB) and their checksums
+3;Jean Zay login node;cd $WORK/SSMMC/SSMMC && tar xf mae_encoders.tar && md5sum -c mae_encoders.md5;extract <DS>_STD/MAE/<MOD>_encoder.pth and check them (all 6 lines must say OK)
+4;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_fixmatch_wrn_v100.sh --dry;print the 9 FixMatch-WRN sbatch commands (nothing submitted)
+5;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_fixmatch_wrn_v100.sh;submit FixMatch-WRN: 9 array jobs = 45 tasks -> <DS>_STD/FIXMATCH_WRN_SF/
+6;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_semivit_v100.sh --dry;print the 18 Semi-ViT sbatch commands (nothing submitted)
+7;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_semivit_v100.sh;submit Semi-ViT SF+FC: 18 array jobs = 90 tasks -> <DS>_STD/{SF,FC}_MAE/ (supervised MAE reference) and <DS>_STD/SEMIVIT_{SF,FC}/
+8;Jean Zay login node;squeue -u $USER;check the jobs; any sbatch refused by the per-user limit is printed at the end of steps 5 and 7: re-run those lines later
