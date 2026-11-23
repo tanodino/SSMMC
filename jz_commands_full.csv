@@ -13,3 +13,4 @@ step;where;command;what it does
 12;Jean Zay login node;squeue -u $USER -o "%.18i %.40j %.8T";check: only the 12 semivit_{SF,FC}_{EUROSAT,TRISTAR}_* arrays should remain (plus anything else of yours)
 13;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_short_tasks_v100.sh --dry;print the 75 individual sbatch commands (nothing submitted)
 14;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_short_tasks_v100.sh;submit 45 FixMatch-WRN jobs (SUNRGBD 4 h, TRISTAR/EUROSAT 9:59) + 30 Semi-ViT SUNRGBD jobs (6 h); refused ones are listed at the end
+15;Jean Zay login node (AFTER the maintenance);cd $WORK/SSMMC/SSMMC && bash submit_semivit_v100.sh --dry | grep '^sbatch' | grep -v SUNRGBD | bash;resubmit only the 12 Semi-ViT TRISTAR/EUROSAT arrays (SF+FC x 3 label budgets, 60 tasks, 20 h each) -- SUNRGBD is covered by the short jobs of step 14
