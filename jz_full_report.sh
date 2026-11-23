@@ -23,8 +23,8 @@ for f in $FOLDERS; do
   done
 done
 echo "== jobs in the queue"; squeue -u $USER -o "%.18i %.40j %.8T %.10M" 2>/dev/null
-echo "== tasks with an error (fmwrn / semivit), most recent first"
-for e in $(ls -t slurm_logs/fmwrn_*.err slurm_logs/semivit_*.err 2>/dev/null); do
+echo "== tasks with an error (fmwrn / semivit / sfmae), most recent first"
+for e in $(ls -t slurm_logs/fmwrn_*.err slurm_logs/semivit_*.err slurm_logs/sfmae_*.err 2>/dev/null); do
   if grep -q -E "Error|Traceback|CANCELLED|DUE TO TIME LIMIT" "$e"; then
     echo "-- $e: $(grep -h -E 'Error|CANCELLED|DUE TO TIME LIMIT' "$e" | tail -1)"
   fi

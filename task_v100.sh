@@ -14,6 +14,7 @@
 # ONE task (one split) as an individual job, with a time limit < 10 h (set with sbatch --time, default 9:59) so it
 # can start before a maintenance window. Same settings as baselines_array_v100.sh / semivit_array_v100.sh.
 #   $1 = plain   : python $2 <dataset> <mod1> <mod2> <perc> <run> [<fusion>]      (e.g. fixmatch_wrn_main.py)
+#   $1 = stage2  : same as semivit but stage 2 only (supervised SF/FC from MAE = reference of the main table)
 #   $1 = semivit : Semi-ViT stage 2 (baselines_main_v5.py, skipped if its checkpoint exists) then stage 3
 #                  (semivit_main.py); arguments <dataset> <mod1> <mod2> <perc> <run> <SF|FC>
 # Examples: sbatch --time=04:00:00 task_v100.sh plain fixmatch_wrn_main.py SUNRGBD_STD RGB DEPTH 5 0
@@ -35,7 +36,7 @@ kind=$1; shift
 echo "job $SLURM_JOB_ID: $kind $*"
 if [ "$kind" == "plain" ]; then
   srun python -u "$@"
-elif [ "$kind" == "semivit" ]; then
+elif [ "$kind" == "semivit" ] || [ "$kind" == "stage2" ]; then
   ds=$1; m1=$2; m2=$3; perc=$4; run=$5; fusion=$6
   for m in $m1 $m2; do [ -f $ds/MAE/${m}_encoder.pth ] || { echo "missing MAE encoder $ds/MAE/${m}_encoder.pth"; exit 1; }; done
   if [ -f $ds/${fusion}_MAE/${perc}_${run}.pth ]; then
@@ -45,6 +46,7 @@ elif [ "$kind" == "semivit" ]; then
     srun python -u baselines_main_v5.py $ds $m1 $m2 $perc $run $fusion || \
       { echo "stage 2 failed, retrying once"; srun python -u baselines_main_v5.py $ds $m1 $m2 $perc $run $fusion; } || exit 1
   fi
+  [ "$kind" == "stage2" ] && exit 0          # stage2: supervised-from-MAE reference only, no Semi-ViT stage
   srun python -u semivit_main.py $ds $m1 $m2 $perc $run $fusion
 else
   echo "unknown kind $kind"; exit 1
