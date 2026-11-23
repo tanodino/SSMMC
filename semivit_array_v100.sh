@@ -33,6 +33,9 @@ export TMPDIR=${JOBSCRATCH:-$SCRATCH/tmp_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}}
 export TORCHINDUCTOR_CACHE_DIR=$TMPDIR/inductor
 export TRITON_CACHE_DIR=$TMPDIR/triton
 mkdir -p $TMPDIR $TORCHINDUCTOR_CACHE_DIR $TRITON_CACHE_DIR
+# torch.compile (used by stage 2, baselines_main_v5.py) compiles with parallel worker processes that can race on
+# the Triton cache (FileNotFoundError on triton_*.json.tmp, seen on Jean Zay 2026-11-23): compile in a single process.
+export TORCHINDUCTOR_COMPILE_THREADS=1
 
 cd $WORK/SSMMC/SSMMC
 RUN=${SLURM_ARRAY_TASK_ID}
@@ -45,6 +48,8 @@ done
 if [ -f $1/$5_MAE/$4_$RUN.pth ]; then
   echo "stage 2 checkpoint $1/$5_MAE/$4_$RUN.pth exists, skipping stage 2"
 else
-  srun python -u baselines_main_v5.py $1 $2 $3 $4 $RUN $5 || exit 1
+  # stage 2, one automatic retry if it fails (transient compile errors)
+  srun python -u baselines_main_v5.py $1 $2 $3 $4 $RUN $5 || \
+    { echo "stage 2 failed, retrying once"; srun python -u baselines_main_v5.py $1 $2 $3 $4 $RUN $5; } || exit 1
 fi
 srun python -u semivit_main.py $1 $2 $3 $4 $RUN $5
