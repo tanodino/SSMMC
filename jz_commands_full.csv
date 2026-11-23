@@ -7,3 +7,9 @@ step;where;command;what it does
 6;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_semivit_v100.sh --dry;print the 18 Semi-ViT sbatch commands (nothing submitted)
 7;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_semivit_v100.sh;submit Semi-ViT SF+FC: 18 array jobs = 90 tasks -> <DS>_STD/{SF,FC}_MAE/ (supervised MAE reference) and <DS>_STD/SEMIVIT_{SF,FC}/
 8;Jean Zay login node;squeue -u $USER;check the jobs; any sbatch refused by the per-user limit is printed at the end of steps 5 and 7: re-run those lines later
+9;Jean Zay login node;cd $WORK/SSMMC/SSMMC && git pull && bash jz_full_report.sh && cat jz_full_report.txt;progress of FixMatch-WRN and Semi-ViT: finished checkpoints per method/dataset/labels (x/5 splits, missing run ids), queue, tasks with errors (send me jz_full_report.txt when you want me to check it)
+10;Jean Zay login node;cd $WORK/SSMMC/SSMMC && git pull;get task_v100.sh and submit_short_tasks_v100.sh (individual jobs < 10 h, to start before the maintenance)
+11;Jean Zay login node;squeue -u $USER -t PENDING -h -o "%A %j" | awk '$2 ~ /^fmwrn_[A-Z]+_[0-9]+$/ || $2 ~ /^semivit_(SF|FC)_SUNRGBD_/ {print $1}' | sort -u | xargs -r scancel;cancel ONLY the pending 20 h arrays that the short jobs replace (FixMatch-WRN: 9 arrays; Semi-ViT SUNRGBD SF/FC: 6 arrays); the 12 Semi-ViT TRISTAR/EUROSAT arrays stay queued for after the maintenance
+12;Jean Zay login node;squeue -u $USER -o "%.18i %.40j %.8T";check: only the 12 semivit_{SF,FC}_{EUROSAT,TRISTAR}_* arrays should remain (plus anything else of yours)
+13;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_short_tasks_v100.sh --dry;print the 75 individual sbatch commands (nothing submitted)
+14;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_short_tasks_v100.sh;submit 45 FixMatch-WRN jobs (SUNRGBD 4 h, TRISTAR/EUROSAT 9:59) + 30 Semi-ViT SUNRGBD jobs (6 h); refused ones are listed at the end
