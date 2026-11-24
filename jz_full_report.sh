@@ -25,8 +25,8 @@ done
 echo "== jobs in the queue"; squeue -u $USER -o "%.18i %.40j %.8T %.10M" 2>/dev/null
 echo "== tasks with an error (fmwrn / semivit / sfmae / tcgm / tcgm2 / kdmvc3), most recent first"
 for e in $(ls -t slurm_logs/fmwrn_*.err slurm_logs/semivit_*.err slurm_logs/sfmae_*.err slurm_logs/tcgm_t_*.err slurm_logs/tcgm2_t_*.err slurm_logs/kdmvc3_t_*.err 2>/dev/null); do
-  if grep -q -E "Error|Traceback|CANCELLED|DUE TO TIME LIMIT" "$e"; then
-    echo "-- $e: $(grep -h -E 'Error|CANCELLED|DUE TO TIME LIMIT' "$e" | tail -1)"
+  if grep -a -q -E "Error|Traceback|CANCELLED|DUE TO TIME LIMIT" "$e"; then
+    echo "-- $e: $(grep -a -h -E 'Error|CANCELLED|DUE TO TIME LIMIT' "$e" | tail -1)"
   fi
 done
 } > jz_full_report.txt 2>&1
