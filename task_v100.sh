@@ -35,7 +35,8 @@ cd $WORK/SSMMC/SSMMC
 kind=$1; shift
 echo "job $SLURM_JOB_ID: $kind $*"
 if [ "$kind" == "plain" ]; then
-  srun python -u "$@"
+  # one automatic retry if the script fails (transient torch.compile / Triton errors happen in the first minutes)
+  srun python -u "$@" || { echo "failed, retrying once"; srun python -u "$@"; }
 elif [ "$kind" == "semivit" ] || [ "$kind" == "stage2" ]; then
   ds=$1; m1=$2; m2=$3; perc=$4; run=$5; fusion=$6
   for m in $m1 $m2; do [ -f $ds/MAE/${m}_encoder.pth ] || { echo "missing MAE encoder $ds/MAE/${m}_encoder.pth"; exit 1; }; done

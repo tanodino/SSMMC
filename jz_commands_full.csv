@@ -21,3 +21,6 @@ step;where;command;what it does
 20;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash jz_resubmit_missing_full.sh;resubmit them as individual jobs (safe to run again later: tasks already done or still queued are skipped)
 21;Jean Zay login node (AFTER the maintenance);cd $WORK/SSMMC/SSMMC && bash submit_sf_mae_refs_v100.sh --dry;print the 30 jobs of the supervised SF-from-MAE reference for TRISTAR/EUROSAT (stage 2 only, 2 h each; nothing submitted)
 22;Jean Zay login node (AFTER the maintenance);cd $WORK/SSMMC/SSMMC && bash submit_sf_mae_refs_v100.sh;submit them -> <DS>_STD/SF_MAE/ (skips tasks already done or queued; safe to run again)
+23;Jean Zay login node;cd $WORK/SSMMC/SSMMC && git pull && bash submit_batch2_v100.sh --dry;print the batch-2 jobs (TCGM from scratch, TCGM MAE start, KDMvC MAE start; 135 individual jobs; nothing submitted)
+24;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash submit_batch2_v100.sh;submit them -> <DS>_STD/TCGM/, TCGM_V2/, KDMvC_V3/ (skips tasks already done or queued: run it again later to resubmit failed ones)
+25;Jean Zay login node;cd $WORK/SSMMC/SSMMC && bash jz_full_report.sh && cat jz_full_report.txt;progress report, now also with TCGM, TCGM_V2 and KDMvC_V3
