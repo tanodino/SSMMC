@@ -17,7 +17,8 @@ Since every method is evaluated on the same test samples in the same order, pair
 (McNemar per split, Wilcoxon / t-test over splits, bootstrap) and other metrics can be
 computed afterwards from these files.
 
-Supported folders: SF, FC, <PREFIX>_SF, <PREFIX>_FC (all SF/FC baselines), KDMvC_V2, MSC_V2, TCGM, OURS_V7.
+Supported folders: SF, FC, <PREFIX>_SF, <PREFIX>_FC (all SF/FC baselines, incl. SEMIVIT_SF/FC, SEMISST_FC),
+SF_MAE, FC_MAE, FIXMATCH_WRN_SF, KDMvC_V2/V3, MSC_V2..V5, TCGM, TCGM_V2, OURS_V7.
 
     python export_predictions.py --out results/preds_jeanzay \
         --methods SF FC FIXMATCH_SF FIXMATCH_FC FREEMATCH_V2_SF FREEMATCH_V2_FC \
@@ -62,17 +63,17 @@ def build_model(folder, config, n_classes):
         model = PretrainModelV7(config, num_classes=n_classes, layer_indices=get_quarterly_layer_indices(12),
                                 gating="sigmoid")
         return model, lambda m, a, b: m.classify_alf(a, b, use_checkpointing=False)[0]
-    if folder == "TCGM":
+    if folder in ("TCGM", "TCGM_V2"):                      # TCGM_V2 = MAE start, same model
         from tcgm import TCGMModel
         return TCGMModel(config), lambda m, a, b: m.predict(a, b)
-    if folder == "KDMvC_V2":
+    if folder in ("KDMvC_V2", "KDMvC_V3"):                 # KDMvC_V3 = MAE start, same model
         from model import ViTEncoder, KDMvCModel
         vit = lambda s, p, c: ViTEncoder(img_size=s, patch_size=p, in_chans=c)
         model = KDMvCModel(vit_encoder_m1=vit(config.img_size_m1, config.patch_size_m1, config.in_chans_m1),
                            vit_encoder_m2=vit(config.img_size_m2, config.patch_size_m2, config.in_chans_m2),
                            embed_dim=384, feat_dim=128, hidden_dim=128, num_classes=n_classes)
         return model, lambda m, a, b: m.predict(a, b)
-    if folder == "MSC_V2":
+    if folder in ("MSC_V2", "MSC_V3", "MSC_V4", "MSC_V5"):  # same MSC model, different starts
         from msc import MSCConfig, MSCModel
         mcfg = MSCConfig(img_size_m1=config.img_size_m1, img_size_m2=config.img_size_m2,
                          patch_size_m1=8, patch_size_m2=8,
@@ -80,7 +81,12 @@ def build_model(folder, config, n_classes):
                          num_classes=n_classes, hidden_dim=256, dropout=0.1, tau=0.95, eta=0.95, lambda_u=1.0,
                          beta1=1.0, beta2=1.0, beta3=1.0, detach_teacher=True)
         return MSCModel(mcfg), lambda m, a, b: m.predict(a, b)
+    if folder == "FIXMATCH_WRN_SF":                        # FixMatch with WRN-28-2 per modality (wrn.py)
+        from wrn import WRNScoreFusion
+        return WRNScoreFusion(n_classes, config.in_chans_m1, config.in_chans_m2), lambda m, a, b: m.predict(a, b)
     fusion = folder.split("_")[-1]
+    if folder in ("SF_MAE", "FC_MAE", "SF_IN", "FC_IN"):    # supervised SF/FC from MAE (or ImageNet) encoders
+        fusion = folder.split("_")[0]
     if fusion in ("SF", "FC"):
         from model import ScoreFusion, FusionConcat
         return (ScoreFusion if fusion == "SF" else FusionConcat)(config), lambda m, a, b: m.predict(a, b)
