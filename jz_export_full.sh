@@ -23,7 +23,7 @@ module load pytorch-gpu/py3/2.3.0
 export PYTHONUSERBASE=$WORK/.local
 cd $WORK/SSMMC/SSMMC
 srun python -u export_predictions.py --out results/preds_jz_full \
-  --methods SF FC FIXMATCH_WRN_SF SF_MAE FC_MAE SEMIVIT_SF SEMIVIT_FC TCGM TCGM_V2 KDMvC_V2 KDMvC_V3
+  --methods SF FC FIXMATCH_WRN_SF SF_MAE FC_MAE SEMIVIT_SF SEMIVIT_FC SEMISST_FC TCGM TCGM_V2 KDMvC_V2 KDMvC_V3
 srun python -u summarize_per_split.py results/preds_jz_full      # summary_table.csv / .txt (mean +- std over splits)
 tar czf preds_jz_full.tar.gz results/preds_jz_full && md5sum preds_jz_full.tar.gz > preds_jz_full.md5
 ls -la preds_jz_full.tar.gz preds_jz_full.md5
