@@ -104,6 +104,7 @@ def main():
             for r in csv.DictReader(fh):
                 rows[(r["dataset"], r["folder"], r["perc"], r["run"])] = r
     missing = []
+    failed = []
 
     for entry in args.datasets:
         dataset, m1, m2 = entry.split(":")
@@ -146,18 +147,27 @@ def main():
                     if (dataset, folder, perc, str(run)) in rows and os.path.exists(npz) and \
                             os.path.getmtime(npz) >= os.path.getmtime(ckpt):
                         continue                          # already exported (resume after an interrupted session)
-                    model, score_fn = build_model(folder, config, n_classes)
-                    model = model.to(device)
-                    state = torch.load(ckpt, map_location=device)
-                    state = {k.replace("_orig_mod.", "", 1): v for k, v in state.items()}
-                    model.load_state_dict(state)      # strict: errors on any mismatch
-                    model.eval()
-                    scores = []
-                    with torch.no_grad():
-                        for fb, sb in loader:
-                            scores.append(score_fn(model, fb.to(device, non_blocking=True),
-                                                   sb.to(device, non_blocking=True)).float().cpu())
-                    scores = torch.cat(scores).numpy()
+                    try:
+                        model, score_fn = build_model(folder, config, n_classes)
+                        model = model.to(device)
+                        state = torch.load(ckpt, map_location=device)
+                        state = {k.replace("_orig_mod.", "", 1): v for k, v in state.items()}
+                        model.load_state_dict(state)      # strict: errors on any mismatch
+                        model.eval()
+                        scores = []
+                        with torch.no_grad():
+                            for fb, sb in loader:
+                                scores.append(score_fn(model, fb.to(device, non_blocking=True),
+                                                       sb.to(device, non_blocking=True)).float().cpu())
+                        scores = torch.cat(scores).numpy()
+                    except Exception as e:            # unreadable / truncated checkpoint: report it, go on
+                        msg = f"{ckpt} ({os.path.getsize(ckpt)} bytes): {type(e).__name__}: {str(e)[:200]}"
+                        print("  FAILED " + msg, flush=True)
+                        failed.append(msg)
+                        model = None
+                        if device == "cuda":
+                            torch.cuda.empty_cache()
+                        continue
                     pred = scores.argmax(1)
                     np.savez_compressed(os.path.join(ds_out, folder, f"{perc}_{run}.npz"),
                                         y_pred=pred.astype(np.int16), scores=scores.astype(np.float16))
@@ -181,6 +191,10 @@ def main():
     if missing:
         print(f"{len(missing)} missing checkpoints:")
         for m in missing:
+            print("  " + m)
+    if failed:
+        print(f"{len(failed)} checkpoints FAILED to load / evaluate (not exported):")
+        for m in failed:
             print("  " + m)
 
 

@@ -22,8 +22,11 @@ module purge
 module load pytorch-gpu/py3/2.3.0
 export PYTHONUSERBASE=$WORK/.local
 cd $WORK/SSMMC/SSMMC
+# the export log (incl. the list of missing checkpoints and of checkpoints that FAILED to load) goes into the archive
+mkdir -p results/preds_jz_full
 srun python -u export_predictions.py --out results/preds_jz_full \
-  --methods SF FC FIXMATCH_WRN_SF SF_MAE FC_MAE SEMIVIT_SF SEMIVIT_FC SEMISST_FC TCGM TCGM_V2 KDMvC_V2 KDMvC_V3
+  --methods SF FC FIXMATCH_WRN_SF SF_MAE FC_MAE SEMIVIT_SF SEMIVIT_FC SEMISST_FC TCGM TCGM_V2 KDMvC_V2 KDMvC_V3 \
+  2>&1 | grep -v -i warn | tee results/preds_jz_full/export_log.txt
 srun python -u summarize_per_split.py results/preds_jz_full      # summary_table.csv / .txt (mean +- std over splits)
 tar czf preds_jz_full.tar.gz results/preds_jz_full && md5sum preds_jz_full.tar.gz > preds_jz_full.md5
 ls -la preds_jz_full.tar.gz preds_jz_full.md5
