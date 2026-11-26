@@ -30,25 +30,51 @@ mkdir -p $TMPDIR $TORCHINDUCTOR_CACHE_DIR $TRITON_CACHE_DIR
 # torch.compile (used by stage 2, baselines_main_v5.py) compiles with parallel worker processes that can race on
 # the Triton cache (FileNotFoundError on triton_*.json.tmp, seen on Jean Zay 2026-11-23): compile in a single process.
 export TORCHINDUCTOR_COMPILE_THREADS=1
+# no core dumps: a crashing python process otherwise writes several GB (core-pt_main_thread-* folders) into $WORK,
+# which can fill the quota and make the final torch.save of other jobs write empty / truncated checkpoints (2026-11-26)
+ulimit -c 0
 cd $WORK/SSMMC/SSMMC
+marker=$TMPDIR/job_start_marker; touch $marker
+
+# ok_ckpts <ds> <perc> <run>: every <ds>/<folder>/<perc>_<run>.pth written by THIS job must load with torch.load;
+# a broken one is deleted (so it is never counted as done by the submit scripts) and the function fails
+ok_ckpts() {
+  local bad=0 f
+  for f in $(find $1 -mindepth 2 -maxdepth 2 -name "${2}_${3}.pth" -newer $marker 2>/dev/null); do
+    if python -c "import sys, torch; torch.load(sys.argv[1], map_location='cpu')" $f > /dev/null 2>&1; then
+      echo "checkpoint OK: $f ($(stat -c %s $f) bytes)"
+    else
+      echo "BROKEN checkpoint (does not load), deleted: $f ($(stat -c %s $f) bytes)"; rm -f $f; bad=1
+    fi
+  done
+  return $bad
+}
+# run_checked <ds> <perc> <run> <python args...>: run, verify the checkpoint, one automatic retry if either fails
+run_checked() {
+  local ds=$1 perc=$2 run=$3; shift 3
+  { srun python -u "$@" && ok_ckpts $ds $perc $run; } && return 0
+  echo "failed or broken checkpoint, retrying once"; touch $marker
+  srun python -u "$@" && ok_ckpts $ds $perc $run
+}
 
 kind=$1; shift
 echo "job $SLURM_JOB_ID: $kind $*"
 if [ "$kind" == "plain" ]; then
-  # one automatic retry if the script fails (transient torch.compile / Triton errors happen in the first minutes)
-  srun python -u "$@" || { echo "failed, retrying once"; srun python -u "$@"; }
+  # $1 = script, $2 = dataset, $5 = perc, $6 = run
+  run_checked $2 $5 $6 "$@"
 elif [ "$kind" == "semivit" ] || [ "$kind" == "stage2" ]; then
   ds=$1; m1=$2; m2=$3; perc=$4; run=$5; fusion=$6
   for m in $m1 $m2; do [ -f $ds/MAE/${m}_encoder.pth ] || { echo "missing MAE encoder $ds/MAE/${m}_encoder.pth"; exit 1; }; done
-  if [ -f $ds/${fusion}_MAE/${perc}_${run}.pth ]; then
-    echo "stage 2 checkpoint $ds/${fusion}_MAE/${perc}_${run}.pth exists, skipping stage 2"
+  if [ -f $ds/${fusion}_MAE/${perc}_${run}.pth ] && \
+     python -c "import sys, torch; torch.load(sys.argv[1], map_location='cpu')" $ds/${fusion}_MAE/${perc}_${run}.pth > /dev/null 2>&1; then
+    echo "stage 2 checkpoint $ds/${fusion}_MAE/${perc}_${run}.pth exists and loads, skipping stage 2"
   else
-    # stage 2, one automatic retry if it fails (transient compile errors)
-    srun python -u baselines_main_v5.py $ds $m1 $m2 $perc $run $fusion || \
-      { echo "stage 2 failed, retrying once"; srun python -u baselines_main_v5.py $ds $m1 $m2 $perc $run $fusion; } || exit 1
+    rm -f $ds/${fusion}_MAE/${perc}_${run}.pth      # absent or broken
+    run_checked $ds $perc $run baselines_main_v5.py $ds $m1 $m2 $perc $run $fusion || exit 1
   fi
   [ "$kind" == "stage2" ] && exit 0          # stage2: supervised-from-MAE reference only, no Semi-ViT stage
-  srun python -u semivit_main.py $ds $m1 $m2 $perc $run $fusion
+  touch $marker
+  srun python -u semivit_main.py $ds $m1 $m2 $perc $run $fusion && ok_ckpts $ds $perc $run
 else
   echo "unknown kind $kind"; exit 1
 fi
