@@ -9,6 +9,7 @@
 #   Semi-ViT FC EUROSAT/TRISTAR (+ its stage 2 = FC_MAE)  -> below, task_v100.sh semivit, 20 h
 #   TCGM, TCGM_V2, KDMvC_V3                            -> submit_batch2_v100.sh
 #   Semi-SST FC (only splits whose FC_MAE exists)      -> submit_semisst_v100.sh (run again after Semi-ViT FC)
+#   MSC v5 (raw MAE start)                             -> submit_msc_v5_v100.sh
 # NB: a checkpoint that exists but is truncated (job killed while saving) counts as done here; such files are
 # listed as FAILED in export_log.txt of the export -> delete them and run this script again.
 cd $WORK/SSMMC/SSMMC
@@ -35,4 +36,5 @@ done
 echo "$n Semi-ViT FC job(s)$([ $DRY -eq 1 ] && echo ' (dry run)')"
 echo "== TCGM / TCGM_V2 / KDMvC_V3";                 bash submit_batch2_v100.sh $ARG
 echo "== Semi-SST FC";                               bash submit_semisst_v100.sh $ARG
+echo "== MSC v5";                                     bash submit_msc_v5_v100.sh $ARG
 } 2>&1 | tee jz_rerun_all_missing.txt
