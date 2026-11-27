@@ -58,7 +58,7 @@ def parse_args():
 
 def build_model(folder, config, n_classes):
     """Model + a function batch -> scores [B, C] (argmax = prediction), exactly as in the restore scripts."""
-    if folder == "OURS_V7":
+    if folder == "OURS_V7" or folder.startswith("A1_"):     # A1 ablation = same v7 model, no pretraining
         from ssl_pretrained_classif_v7 import PretrainModelV7, get_quarterly_layer_indices
         model = PretrainModelV7(config, num_classes=n_classes, layer_indices=get_quarterly_layer_indices(12),
                                 gating="sigmoid")
